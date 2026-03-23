@@ -4,6 +4,9 @@
 ## Author: The Last Luna Wolves
 ## Version: 1.0.0
 ## SavedVariables: LunaWolvesDB
+## X-Website: https://github.com/Stanischewski/LunaWolves
+## X-Curse-Project-ID: 0
+## X-WoWI-ID: 0
 
 Core.lua
 Modules/DKP.lua
