@@ -171,13 +171,16 @@ function DKP:OnEncounterEnd(encounterID, encounterName, difficultyID, groupSize,
         local name = select(1, GetRaidRosterInfo(i))
         if name then
             local shortName = strsplit("-", name)
-            local ok, entryId, ts = self:Award(shortName, pointsPerKill,
-                "Bosskill: " .. (encounterName or "Unbekannt"), "BOSS")
-            if ok then
-                -- Broadcast an Gilde
-                self:BroadcastUpdate(entryId, shortName, pointsPerKill,
-                    "Bosskill: " .. (encounterName or "Unbekannt"), "BOSS", ts)
-                awarded = awarded + 1
+            -- Nur Gildenmitglieder erhalten Auto-DKP
+            if LunaWolves.guildRanks[shortName] ~= nil then
+                local ok, entryId, ts = self:Award(shortName, pointsPerKill,
+                    "Bosskill: " .. (encounterName or "Unbekannt"), "BOSS")
+                if ok then
+                    -- Broadcast an Gilde
+                    self:BroadcastUpdate(entryId, shortName, pointsPerKill,
+                        "Bosskill: " .. (encounterName or "Unbekannt"), "BOSS", ts)
+                    awarded = awarded + 1
+                end
             end
         end
     end
@@ -236,6 +239,8 @@ function DKP:OnMessage(command, payload, sender, channel)
         self:HandleSyncRequest(payload, sender)
     elseif command == "SYNCRESP" then
         self:HandleSyncResponse(payload, sender)
+    elseif command == "DELETE" then
+        self:HandleDelete(payload, sender)
     end
 end
 
@@ -359,18 +364,65 @@ function DKP:HandleSlash(input)
 
     elseif cmd == "history" then
         local name = rest
-        local history = self:GetHistory(name, 10)
-        if #history == 0 then
-            LunaWolves:Print("Keine History" .. (name and (" fuer " .. name) or "") .. ".")
+        if name and name ~= "" then
+            self:ShowHistoryUI(name)
         else
-            LunaWolves:Print("--- DKP History" .. (name and (" fuer " .. name) or "") .. " ---")
-            for _, entry in ipairs(history) do
-                local sign = entry.delta >= 0 and "+" or ""
-                local d = date("%d.%m. %H:%M", entry.timestamp)
-                LunaWolves:Print(d .. " | " .. entry.player .. " | " ..
-                    sign .. entry.delta .. " | " .. entry.reason ..
-                    " | von " .. entry.officer)
+            self:ShowHistoryUI(nil)
+        end
+
+    elseif cmd == "delete" then
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers koennen Spieler loeschen.")
+            return
+        end
+        local name = rest
+        if not name or name == "" then
+            LunaWolves:Print("Syntax: /lw dkp delete Name")
+            return
+        end
+        if not LunaWolvesDB.DKP.points[name] then
+            LunaWolves:Print("Spieler '" .. name .. "' nicht in der DKP-Liste.")
+            return
+        end
+        local cur, life = self:GetPoints(name)
+        LunaWolves:Print("|cffff4444Wirklich " .. name .. " loeschen?|r (" .. cur .. " DKP, " .. life .. " Lifetime)")
+        LunaWolves:Print("Bestaetigen mit: /lw dkp confirmdelete " .. name)
+        self._pendingDelete = name
+        -- Timeout: 30 Sekunden
+        C_Timer.After(30, function()
+            if self._pendingDelete == name then
+                self._pendingDelete = nil
             end
+        end)
+
+    elseif cmd == "confirmdelete" then
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers koennen Spieler loeschen.")
+            return
+        end
+        local name = rest
+        if not name or name == "" or self._pendingDelete ~= name then
+            LunaWolves:Print("Kein ausstehender Loeschvorgang fuer diesen Spieler.")
+            LunaWolves:Print("Zuerst: /lw dkp delete Name")
+            return
+        end
+        self._pendingDelete = nil
+        -- Spieler aus points entfernen
+        LunaWolvesDB.DKP.points[name] = nil
+        -- History-Eintraege entfernen
+        local removed = 0
+        for i = #LunaWolvesDB.DKP.history, 1, -1 do
+            if LunaWolvesDB.DKP.history[i].player == name then
+                table.remove(LunaWolvesDB.DKP.history, i)
+                removed = removed + 1
+            end
+        end
+        LunaWolves:Print("|cff00ff00" .. name .. " geloescht.|r (" .. removed .. " History-Eintraege entfernt)")
+        -- Broadcast an andere Officers
+        LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name)
+        -- UI aktualisieren
+        if self.mainFrame and self.mainFrame:IsShown() then
+            self:RefreshList()
         end
 
     elseif cmd == "setboss" then
@@ -532,7 +584,7 @@ function DKP:CreateUI()
     histBtn:SetPoint("LEFT", syncBtn, "RIGHT", 5, 0)
     histBtn:SetText("History")
     histBtn:SetScript("OnClick", function()
-        DKP:HandleSlash("history")
+        DKP:ShowHistoryUI(nil)
     end)
 
     -- ESC schliesst das Fenster
@@ -618,6 +670,211 @@ function DKP:GetPlayerClass(playerName)
         end
     end
     return nil
+end
+
+-- ============================================================
+-- Delete-Sync
+-- ============================================================
+
+function DKP:HandleDelete(payload, sender)
+    -- Sender muss Officer sein
+    if not LunaWolves:IsOfficer(sender) then return end
+
+    local name = payload
+    if not name or name == "" then return end
+
+    -- Spieler lokal entfernen
+    LunaWolvesDB.DKP.points[name] = nil
+    for i = #LunaWolvesDB.DKP.history, 1, -1 do
+        if LunaWolvesDB.DKP.history[i].player == name then
+            table.remove(LunaWolvesDB.DKP.history, i)
+        end
+    end
+
+    LunaWolves:Print(name .. " wurde von " .. sender .. " aus der DKP-Liste entfernt.")
+
+    -- UI aktualisieren
+    if self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
+    end
+end
+
+-- ============================================================
+-- UI: History-Fenster
+-- ============================================================
+
+local HIST_ROW_HEIGHT = 18
+local HIST_VISIBLE_ROWS = 20
+local HIST_WIDTH = 580
+
+function DKP:CreateHistoryUI()
+    if self.historyFrame then return end
+
+    local f = CreateFrame("Frame", "LunaWolves_HistoryFrame", UIParent, "BackdropTemplate")
+    f:SetSize(HIST_WIDTH + 40, HIST_ROW_HEIGHT * HIST_VISIBLE_ROWS + 80)
+    f:SetPoint("CENTER", UIParent, "CENTER", 250, 0)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetFrameStrata("HIGH")
+    f:SetBackdrop({
+        bgFile = SOLID,
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+    f:SetBackdropBorderColor(0.4, 0.4, 0.6, 1)
+    f:Hide()
+    self.historyFrame = f
+
+    -- Titelleiste
+    f.title = f:CreateFontString(nil, "OVERLAY")
+    f.title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+    f.title:SetPoint("TOP", f, "TOP", 0, -10)
+
+    -- Schliessen-Button
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
+
+    -- Spalten-Header
+    local headerY = -35
+    local headers = {
+        { "Datum", 15 },
+        { "Name", 130 },
+        { "DKP", 265 },
+        { "Grund", 330 },
+        { "Officer", 500 },
+    }
+    for _, h in ipairs(headers) do
+        local ht = f:CreateFontString(nil, "OVERLAY")
+        ht:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+        ht:SetTextColor(0.8, 0.8, 0.4)
+        ht:SetPoint("TOPLEFT", f, "TOPLEFT", h[2], headerY)
+        ht:SetText(h[1])
+    end
+
+    -- Trennlinie
+    local sep = f:CreateTexture(nil, "ARTWORK")
+    sep:SetTexture(SOLID)
+    sep:SetVertexColor(0.4, 0.4, 0.6, 0.5)
+    sep:SetSize(HIST_WIDTH, 1)
+    sep:SetPoint("TOPLEFT", f, "TOPLEFT", 15, headerY - 15)
+
+    -- Scroll-Frame
+    local scrollFrame = CreateFrame("ScrollFrame", "LunaWolves_HistoryScroll", f, "FauxScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 10, headerY - 20)
+    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -35, 15)
+    self.histScrollFrame = scrollFrame
+
+    -- Zeilen erstellen
+    self.histRows = {}
+    for i = 1, HIST_VISIBLE_ROWS do
+        local row = CreateFrame("Frame", nil, f)
+        row:SetSize(HIST_WIDTH, HIST_ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 5, -((i - 1) * HIST_ROW_HEIGHT))
+
+        row.dateText = row:CreateFontString(nil, "OVERLAY")
+        row.dateText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        row.dateText:SetPoint("LEFT", row, "LEFT", 5, 0)
+        row.dateText:SetWidth(110)
+        row.dateText:SetJustifyH("LEFT")
+        row.dateText:SetTextColor(0.7, 0.7, 0.7)
+
+        row.nameText = row:CreateFontString(nil, "OVERLAY")
+        row.nameText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        row.nameText:SetPoint("LEFT", row, "LEFT", 120, 0)
+        row.nameText:SetWidth(125)
+        row.nameText:SetJustifyH("LEFT")
+
+        row.dkpText = row:CreateFontString(nil, "OVERLAY")
+        row.dkpText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        row.dkpText:SetPoint("LEFT", row, "LEFT", 255, 0)
+        row.dkpText:SetWidth(60)
+        row.dkpText:SetJustifyH("RIGHT")
+
+        row.reasonText = row:CreateFontString(nil, "OVERLAY")
+        row.reasonText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        row.reasonText:SetPoint("LEFT", row, "LEFT", 320, 0)
+        row.reasonText:SetWidth(165)
+        row.reasonText:SetJustifyH("LEFT")
+        row.reasonText:SetTextColor(0.8, 0.8, 0.8)
+
+        row.officerText = row:CreateFontString(nil, "OVERLAY")
+        row.officerText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        row.officerText:SetPoint("LEFT", row, "LEFT", 490, 0)
+        row.officerText:SetWidth(90)
+        row.officerText:SetJustifyH("LEFT")
+        row.officerText:SetTextColor(0.6, 0.6, 0.6)
+
+        self.histRows[i] = row
+    end
+
+    -- Scroll-Handler
+    scrollFrame:SetScript("OnVerticalScroll", function(self, offset)
+        FauxScrollFrame_OnVerticalScroll(self, offset, HIST_ROW_HEIGHT, function()
+            DKP:RefreshHistoryList()
+        end)
+    end)
+
+    -- ESC schliesst das Fenster
+    table.insert(UISpecialFrames, "LunaWolves_HistoryFrame")
+end
+
+function DKP:ShowHistoryUI(playerName)
+    if not self.historyFrame then
+        self:CreateHistoryUI()
+    end
+
+    self._historyFilter = playerName
+    local titleText = "|cff8888ffDKP History|r"
+    if playerName then
+        titleText = titleText .. " - " .. playerName
+    end
+    self.historyFrame.title:SetText(titleText)
+
+    self:RefreshHistoryList()
+    self.historyFrame:Show()
+end
+
+function DKP:RefreshHistoryList()
+    local history = self:GetHistory(self._historyFilter, 200)
+    local numEntries = #history
+
+    FauxScrollFrame_Update(self.histScrollFrame, numEntries, HIST_VISIBLE_ROWS, HIST_ROW_HEIGHT)
+    local offset = FauxScrollFrame_GetOffset(self.histScrollFrame)
+
+    for i = 1, HIST_VISIBLE_ROWS do
+        local row = self.histRows[i]
+        local idx = i + offset
+
+        if idx <= numEntries then
+            local entry = history[idx]
+            local d = date("%d.%m.%Y %H:%M", entry.timestamp)
+            local sign = entry.delta >= 0 and "|cff00ff00+" or "|cffff4444"
+
+            row.dateText:SetText(d)
+            row.nameText:SetText(entry.player)
+            row.dkpText:SetText(sign .. entry.delta .. "|r")
+            row.reasonText:SetText(entry.reason)
+            row.officerText:SetText(entry.officer)
+
+            -- Klassenfarbe fuer Name
+            local classFile = self:GetPlayerClass(entry.player)
+            if classFile and CLASS_COLORS[classFile] then
+                local c = CLASS_COLORS[classFile]
+                row.nameText:SetTextColor(c.r, c.g, c.b)
+            else
+                row.nameText:SetTextColor(1, 1, 1)
+            end
+
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
 end
 
 -- ============================================================

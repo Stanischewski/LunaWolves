@@ -2,7 +2,7 @@
 ## Title: LunaWolves
 ## Notes: Gilden-Addon fuer The Last Luna Wolves -- DKP, Raid-Einladungen und mehr
 ## Author: The Last Luna Wolves
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: LunaWolvesDB
 ## X-Website: https://github.com/Stanischewski/LunaWolves
 ## X-Wago-ID: rN4kexGD

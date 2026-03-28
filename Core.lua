@@ -131,9 +131,29 @@ local function OnAddonMessage(prefix, message, channel, sender)
 
     -- Normales Routing: MODULE:COMMAND:payload
     local moduleName, command, payload = strsplit(":", message, 3)
+
+    -- Core-Nachrichten direkt verarbeiten
+    if moduleName == "CORE" then
+        LunaWolves:OnCoreMessage(command, payload or "", senderShort, channel)
+        return
+    end
+
     local mod = LunaWolves.modules[moduleName]
     if mod and mod.OnMessage then
         mod:OnMessage(command, payload or "", senderShort, channel)
+    end
+end
+
+-- Core-Nachrichten verarbeiten
+function LunaWolves:OnCoreMessage(command, payload, sender, channel)
+    if command == "THRESHOLD" then
+        -- Nur von Officers akzeptieren
+        if not self:IsOfficer(sender) then return end
+        local threshold = tonumber(payload)
+        if threshold then
+            LunaWolvesDB.officerRankThreshold = threshold
+            self:Print("Officer-Schwelle von " .. sender .. " aktualisiert: Rang <= " .. threshold)
+        end
     end
 end
 
@@ -230,12 +250,18 @@ SlashCmdList["LUNAWOLVES"] = function(input)
             mod:HandleSlash(rest)
         end
     elseif cmd == "officer" then
-        -- Officer-Rang-Schwelle setzen
+        -- Officer-Rang-Schwelle setzen (nur Officers!)
         local threshold = tonumber(rest)
         if threshold then
+            if not LunaWolves:IsOfficer() then
+                LunaWolves:Print("Nur Officers koennen die Schwelle aendern.")
+                return
+            end
             LunaWolvesDB.officerRankThreshold = threshold
             LunaWolves:Print("Officer-Rang-Schwelle auf " .. threshold .. " gesetzt.")
             LunaWolves:Print("Raenge 0 bis " .. threshold .. " gelten jetzt als Officer.")
+            -- An andere Officers broadcasten
+            LunaWolves:SendMessage("GUILD", "CORE", "THRESHOLD", tostring(threshold))
         else
             LunaWolves:Print("Aktuell: Rang <= " .. (LunaWolvesDB.officerRankThreshold or 1) .. " = Officer")
             LunaWolves:Print("Aendern: /lw officer <rang>")
@@ -264,8 +290,9 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw dkp show [Name] -- DKP anzeigen")
         LunaWolves:Print("/lw dkp add Name Anzahl Grund -- Punkte vergeben")
         LunaWolves:Print("/lw dkp sub Name Anzahl Grund -- Punkte abziehen")
+        LunaWolves:Print("/lw dkp history [Name] -- History-Fenster oeffnen")
+        LunaWolves:Print("/lw dkp delete Name -- Spieler aus DKP loeschen")
         LunaWolves:Print("/lw dkp sync -- Sync erzwingen")
-        LunaWolves:Print("/lw dkp history [Name] -- History anzeigen")
         LunaWolves:Print("/lw raid create Titel -- Raid-Event erstellen")
         LunaWolves:Print("/lw raid close -- Anmeldungen schliessen")
         LunaWolves:Print("/lw raid -- Raid-Verwaltung oeffnen")
