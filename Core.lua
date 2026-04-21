@@ -506,7 +506,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.0.0 geladen. /lw fuer Hilfe.")
+        LunaWolves:Print("v1.0.2 geladen. /lw fuer Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()

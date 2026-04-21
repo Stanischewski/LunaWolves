@@ -222,7 +222,15 @@ function DKP:BroadcastUpdate(entryId, player, delta, reason, entryType, timestam
         entryId, player, tostring(delta), reason, entryType,
         LunaWolves.playerName, tostring(timestamp)
     }, ";")
+    -- Immer an Gilde (fuer Offline-Sync und Nicht-Raid-Officers)
     LunaWolves:SendMessage("GUILD", "DKP", "UPDATE", payload)
+    -- Im Raid/Gruppe zusaetzlich direkt senden -- sorgt fuer sofortige Aktualisierung
+    -- auch bei Cross-Realm-Gruppen wo GUILD-Nachrichten verzoegert ankommen koennen
+    if IsInRaid() then
+        LunaWolves:SendMessage("RAID", "DKP", "UPDATE", payload)
+    elseif IsInGroup() then
+        LunaWolves:SendMessage("PARTY", "DKP", "UPDATE", payload)
+    end
 end
 
 -- Sync anfordern (beim Login)
@@ -631,12 +639,20 @@ function DKP:RefreshList()
             local p = players[idx]
             row.playerData = p
 
-            row.nameText:SetText(p.name)
             row.dkpText:SetText(tostring(p.current))
             row.lifetimeText:SetText(tostring(p.lifetime))
 
-            -- Klassenfarbe (falls im Gildenroster bekannt)
-            local classFile = self:GetPlayerClass(p.name)
+            -- Klasse und Realm aus Gildenroster holen
+            local classFile, realm = self:GetPlayerInfo(p.name)
+
+            -- Name: Realm grau dahinter wenn Cross-Realm
+            if realm and realm ~= "" then
+                row.nameText:SetText(p.name .. "|cff777777-" .. realm .. "|r")
+            else
+                row.nameText:SetText(p.name)
+            end
+
+            -- Klassenfarbe
             if classFile and CLASS_COLORS[classFile] then
                 local c = CLASS_COLORS[classFile]
                 row.nameText:SetTextColor(c.r, c.g, c.b)
@@ -656,20 +672,21 @@ function DKP:RefreshList()
     end
 end
 
--- Spielerklasse aus dem Gildenroster ermitteln
-function DKP:GetPlayerClass(playerName)
-    if not IsInGuild() then return nil end
+-- Spielerklasse und Realm aus dem Gildenroster ermitteln
+-- Gibt classFile, realm zurueck (realm = nil wenn gleicher Realm)
+function DKP:GetPlayerInfo(playerName)
+    if not IsInGuild() then return nil, nil end
     local numMembers = GetNumGuildMembers()
     for i = 1, numMembers do
         local name, _, _, _, _, _, _, _, _, _, classFile = GetGuildRosterInfo(i)
         if name then
-            local short = strsplit("-", name)
+            local short, realm = strsplit("-", name)
             if short == playerName then
-                return classFile
+                return classFile, realm
             end
         end
     end
-    return nil
+    return nil, nil
 end
 
 -- ============================================================
@@ -856,13 +873,21 @@ function DKP:RefreshHistoryList()
             local sign = entry.delta >= 0 and "|cff00ff00+" or "|cffff4444"
 
             row.dateText:SetText(d)
-            row.nameText:SetText(entry.player)
             row.dkpText:SetText(sign .. entry.delta .. "|r")
             row.reasonText:SetText(entry.reason)
             row.officerText:SetText(entry.officer)
 
+            -- Klasse und Realm holen
+            local classFile, realm = self:GetPlayerInfo(entry.player)
+
+            -- Name mit Realm wenn Cross-Realm
+            if realm and realm ~= "" then
+                row.nameText:SetText(entry.player .. "|cff777777-" .. realm .. "|r")
+            else
+                row.nameText:SetText(entry.player)
+            end
+
             -- Klassenfarbe fuer Name
-            local classFile = self:GetPlayerClass(entry.player)
             if classFile and CLASS_COLORS[classFile] then
                 local c = CLASS_COLORS[classFile]
                 row.nameText:SetTextColor(c.r, c.g, c.b)
