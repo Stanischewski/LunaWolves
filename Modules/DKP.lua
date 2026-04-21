@@ -558,10 +558,10 @@ function DKP:CreateUI()
 
         row.playerData = nil
 
-        -- Rechtsklick-Menue fuer Officers
+        -- Rechtsklick-Menue fuer alle (History), Punkt-Aenderungen nur fuer Officers
         row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         row:SetScript("OnClick", function(self, button)
-            if button == "RightButton" and row.playerData and LunaWolves:IsOfficer() then
+            if button == "RightButton" and row.playerData then
                 DKP:ShowContextMenu(row, row.playerData.name)
             end
         end)
@@ -907,14 +907,23 @@ end
 -- ============================================================
 
 function DKP:ShowContextMenu(anchor, playerName)
+    local isOfficer = LunaWolves:IsOfficer()
     MenuUtil.CreateContextMenu(anchor, function(ownerRegion, rootDescription)
         rootDescription:CreateTitle(playerName)
-        rootDescription:CreateButton("Punkte vergeben", function()
+
+        -- Punkte vergeben: nur fuer Officers aktiv, sonst ausgegraut
+        local addBtn = rootDescription:CreateButton("Punkte vergeben", function()
             DKP:ShowInputDialog(playerName, "add")
         end)
-        rootDescription:CreateButton("Punkte abziehen", function()
+        addBtn:SetEnabled(isOfficer)
+
+        -- Punkte abziehen: nur fuer Officers aktiv, sonst ausgegraut
+        local subBtn = rootDescription:CreateButton("Punkte abziehen", function()
             DKP:ShowInputDialog(playerName, "sub")
         end)
+        subBtn:SetEnabled(isOfficer)
+
+        -- History: fuer alle sichtbar und klickbar
         rootDescription:CreateButton("History anzeigen", function()
             DKP:HandleSlash("history " .. playerName)
         end)
