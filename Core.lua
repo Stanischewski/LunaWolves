@@ -296,9 +296,10 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw dkp off -- DKP-Session beenden")
         LunaWolves:Print("/lw dkp status -- Session-Status anzeigen")
         LunaWolves:Print("/lw dkp sync -- Sync erzwingen")
-        LunaWolves:Print("/lw raid create Titel -- Raid-Event erstellen")
-        LunaWolves:Print("/lw raid close -- Anmeldungen schliessen")
-        LunaWolves:Print("/lw raid -- Raid-Verwaltung oeffnen")
+        LunaWolves:Print("/lw raid -- Gruppen-Suche oeffnen")
+        LunaWolves:Print("/lw raid create [Titel] -- Gruppe erstellen (Dialog oder direkt)")
+        LunaWolves:Print("/lw raid close -- Eigene Gruppe schliessen")
+        LunaWolves:Print("/lw raid refresh -- Liste aktualisieren")
         LunaWolves:Print("/lw ranks -- Gildenraenge anzeigen")
         LunaWolves:Print("/lw officer <rang> -- Officer-Rang-Schwelle setzen")
     end
@@ -374,7 +375,7 @@ local function CreateMinimapButton()
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("|cff8888ffLunaWolves|r", 1, 1, 1)
         GameTooltip:AddLine("Linksklick: DKP oeffnen", 0.7, 0.7, 0.7)
-        GameTooltip:AddLine("Rechtsklick: Raid-Manager", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Rechtsklick: Gruppen-Suche", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function()
@@ -390,8 +391,8 @@ local function CreateMinimapButton()
             end
         elseif button == "RightButton" then
             local raid = LunaWolves:GetModule("RAID")
-            if raid and raid.HandleSlash then
-                raid:HandleSlash("")
+            if raid and raid.ShowGroupList then
+                raid:ShowGroupList()
             end
         end
     end)
@@ -509,7 +510,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.0.4 geladen. /lw fuer Hilfe.")
+        LunaWolves:Print("v1.0.5 geladen. /lw fuer Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()
