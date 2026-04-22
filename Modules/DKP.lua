@@ -58,7 +58,7 @@ function DKP:OnEnable()
             -- Session automatisch beenden wenn nicht mehr im Schlachtzug
             if DKP.sessionActive and not IsInRaid() then
                 DKP:DeactivateSession(true)
-                LunaWolves:Print("DKP-Session automatisch beendet -- Schlachtzug aufgeloest.")
+                LunaWolves:Print("DKP-Session automatisch beendet -- Schlachtzug aufgelöst.")
             end
         elseif event == "PLAYER_ENTERING_WORLD" then
             -- Session beenden wenn in andere Instanz gewechselt
@@ -87,7 +87,7 @@ end
 -- Kern-Operationen
 -- ============================================================
 
--- Eindeutige ID fuer History-Eintraege
+-- Eindeutige ID für History-Einträge
 local function GenerateEntryId(officer)
     return officer .. "-" .. time() .. "-" .. math.random(1000, 9999)
 end
@@ -95,7 +95,7 @@ end
 -- Punkte vergeben
 function DKP:Award(player, amount, reason, entryType, officer, entryId, timestamp)
     if not LunaWolves:IsOfficer() and not entryId then
-        LunaWolves:Print("Nur Officers koennen DKP vergeben.")
+        LunaWolves:Print("Nur Officers können DKP vergeben.")
         return false
     end
 
@@ -107,7 +107,7 @@ function DKP:Award(player, amount, reason, entryType, officer, entryId, timestam
     timestamp = timestamp or time()
     entryType = entryType or "MANUAL"
 
-    -- Duplikat pruefen
+    -- Duplikat prüfen
     for _, entry in ipairs(LunaWolvesDB.DKP.history) do
         if entry.id == entryId then
             return false  -- Bereits vorhanden
@@ -165,7 +165,7 @@ end
 function DKP:GetHistory(player, limit)
     limit = limit or 20
     local result = {}
-    -- Rueckwaerts durch die History (neueste zuerst)
+    -- Rückwärts durch die History (neueste zuerst)
     for i = #LunaWolvesDB.DKP.history, 1, -1 do
         local entry = LunaWolvesDB.DKP.history[i]
         if not player or entry.player == player then
@@ -209,7 +209,7 @@ function DKP:OnEncounterEnd(encounterID, encounterName, difficultyID, groupSize,
 
     if awarded > 0 then
         LunaWolves:Print(awarded .. " Spieler haben " .. pointsPerKill ..
-            " DKP fuer " .. (encounterName or "Bosskill") .. " erhalten.")
+            " DKP für " .. (encounterName or "Bosskill") .. " erhalten.")
     end
 end
 
@@ -247,10 +247,10 @@ function DKP:BroadcastUpdate(entryId, player, delta, reason, entryType, timestam
         entryId, player, tostring(delta), reason, entryType,
         LunaWolves.playerName, tostring(timestamp)
     }, ";")
-    -- Immer an Gilde (fuer Offline-Sync und Nicht-Raid-Officers)
+    -- Immer an Gilde (für Offline-Sync und Nicht-Raid-Officers)
     LunaWolves:SendMessage("GUILD", "DKP", "UPDATE", payload)
-    -- Im Raid/Gruppe zusaetzlich direkt senden -- sorgt fuer sofortige Aktualisierung
-    -- auch bei Cross-Realm-Gruppen wo GUILD-Nachrichten verzoegert ankommen koennen
+    -- Im Raid/Gruppe zusaetzlich direkt senden -- sorgt für sofortige Aktualisierung
+    -- auch bei Cross-Realm-Gruppen wo GUILD-Nachrichten verzögert ankommen können
     if IsInRaid() then
         LunaWolves:SendMessage("RAID", "DKP", "UPDATE", payload)
     elseif IsInGroup() then
@@ -287,7 +287,7 @@ function DKP:HandleUpdate(payload, sender)
     delta = tonumber(delta) or 0
     ts = tonumber(ts) or time()
 
-    -- In lokale DB einfuegen (Award prueft Duplikate)
+    -- In lokale DB einfügen (Award prueft Duplikate)
     local ok = self:Award(player, delta, reason, entryType, officer, id, ts)
     if ok and ts > (LunaWolvesDB.DKP.lastSyncTimestamp or 0) then
         LunaWolvesDB.DKP.lastSyncTimestamp = ts
@@ -299,7 +299,7 @@ function DKP:HandleSyncRequest(payload, sender)
     if not LunaWolves:IsOfficer() then return end
 
     -- Nur der alphabetisch erste online Officer antwortet (vermeidet Mehrfach-Antworten)
-    -- Vereinfacht: Wir antworten immer, der Empfaenger dedupliziert
+    -- Vereinfacht: Wir antworten immer, der Empfänger dedupliziert
     local sinceTs = tonumber(payload) or 0
     local entries = {}
 
@@ -340,7 +340,7 @@ function DKP:HandleSyncResponse(payload, sender)
     end
 
     if added > 0 then
-        LunaWolves:Print(added .. " DKP-Eintraege synchronisiert.")
+        LunaWolves:Print(added .. " DKP-Einträge synchronisiert.")
     end
 end
 
@@ -359,7 +359,7 @@ function DKP:HandleSlash(input)
 
     elseif cmd == "add" then
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen DKP vergeben.")
+            LunaWolves:Print("Nur Officers können DKP vergeben.")
             return
         end
         local name, amount, reason = strmatch(rest or "", "^(%S+)%s+(%d+)%s*(.*)")
@@ -377,7 +377,7 @@ function DKP:HandleSlash(input)
 
     elseif cmd == "sub" then
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen DKP abziehen.")
+            LunaWolves:Print("Nur Officers können DKP abziehen.")
             return
         end
         local name, amount, reason = strmatch(rest or "", "^(%S+)%s+(%d+)%s*(.*)")
@@ -407,7 +407,7 @@ function DKP:HandleSlash(input)
 
     elseif cmd == "delete" then
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen Spieler loeschen.")
+            LunaWolves:Print("Nur Officers können Spieler löschen.")
             return
         end
         local name = rest
@@ -420,8 +420,8 @@ function DKP:HandleSlash(input)
             return
         end
         local cur, life = self:GetPoints(name)
-        LunaWolves:Print("|cffff4444Wirklich " .. name .. " loeschen?|r (" .. cur .. " DKP, " .. life .. " Lifetime)")
-        LunaWolves:Print("Bestaetigen mit: /lw dkp confirmdelete " .. name)
+        LunaWolves:Print("|cffff4444Wirklich " .. name .. " löschen?|r (" .. cur .. " DKP, " .. life .. " Lifetime)")
+        LunaWolves:Print("Bestätigen mit: /lw dkp confirmdelete " .. name)
         self._pendingDelete = name
         -- Timeout: 30 Sekunden
         C_Timer.After(30, function()
@@ -432,19 +432,19 @@ function DKP:HandleSlash(input)
 
     elseif cmd == "confirmdelete" then
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen Spieler loeschen.")
+            LunaWolves:Print("Nur Officers können Spieler löschen.")
             return
         end
         local name = rest
         if not name or name == "" or self._pendingDelete ~= name then
-            LunaWolves:Print("Kein ausstehender Loeschvorgang fuer diesen Spieler.")
+            LunaWolves:Print("Kein ausstehender Löschvorgang für diesen Spieler.")
             LunaWolves:Print("Zuerst: /lw dkp delete Name")
             return
         end
         self._pendingDelete = nil
         -- Spieler aus points entfernen
         LunaWolvesDB.DKP.points[name] = nil
-        -- History-Eintraege entfernen
+        -- History-Einträge entfernen
         local removed = 0
         for i = #LunaWolvesDB.DKP.history, 1, -1 do
             if LunaWolvesDB.DKP.history[i].player == name then
@@ -452,7 +452,7 @@ function DKP:HandleSlash(input)
                 removed = removed + 1
             end
         end
-        LunaWolves:Print("|cff00ff00" .. name .. " geloescht.|r (" .. removed .. " History-Eintraege entfernt)")
+        LunaWolves:Print("|cff00ff00" .. name .. " gelöscht.|r (" .. removed .. " History-Einträge entfernt)")
         -- Broadcast an andere Officers
         LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name)
         -- UI aktualisieren
@@ -462,14 +462,14 @@ function DKP:HandleSlash(input)
 
     elseif cmd == "on" then
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen eine DKP-Session starten.")
+            LunaWolves:Print("Nur Officers können eine DKP-Session starten.")
             return
         end
         self:ActivateSession()
 
     elseif cmd == "off" then
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen eine DKP-Session beenden.")
+            LunaWolves:Print("Nur Officers können eine DKP-Session beenden.")
             return
         end
         self:DeactivateSession()
@@ -490,11 +490,11 @@ function DKP:HandleSlash(input)
         else
             LunaWolves:Print("Aktuell: " .. (LunaWolvesDB.DKP.pointsPerKill or 10) ..
                 " Punkte pro Bosskill")
-            LunaWolves:Print("Aendern: /lw dkp setboss <anzahl>")
+            LunaWolves:Print("Ändern: /lw dkp setboss <anzahl>")
         end
 
     else
-        -- Kein Subkommando oder leer: UI oeffnen
+        -- Kein Subkommando oder leer: UI öffnen
         self:ToggleUI()
     end
 end
@@ -533,7 +533,7 @@ function DKP:CreateUI()
     title:SetPoint("TOP", f, "TOP", 0, -10)
     title:SetText("|cff8888ffLunaWolves|r DKP")
 
-    -- Schliessen-Button
+    -- Schließen-Button
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
@@ -606,7 +606,7 @@ function DKP:CreateUI()
 
         row.playerData = nil
 
-        -- Rechtsklick-Menue fuer alle (History), Punkt-Aenderungen nur fuer Officers
+        -- Rechtsklick-Menü für alle (History), Punkt-Änderungen nur für Officers
         row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         row:SetScript("OnClick", function(self, button)
             if button == "RightButton" and row.playerData then
@@ -632,7 +632,7 @@ function DKP:CreateUI()
     sessionLabel:SetTextColor(1, 1, 1)
     f.sessionLabel = sessionLabel
 
-    -- Trennlinie ueber Buttons
+    -- Trennlinie über Buttons
     local btnSep = f:CreateTexture(nil, "ARTWORK")
     btnSep:SetTexture(SOLID)
     btnSep:SetVertexColor(0.4, 0.4, 0.6, 0.4)
@@ -658,14 +658,14 @@ function DKP:CreateUI()
         DKP:ShowHistoryUI(nil)
     end)
 
-    -- Session-Button (fuer Officers -- Status fuer alle sichtbar)
+    -- Session-Button (für Officers -- Status für alle sichtbar)
     local sessionBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     sessionBtn:SetSize(120, 22)
     sessionBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 38)
     sessionBtn:SetText("Session starten")
     sessionBtn:SetScript("OnClick", function()
         if not LunaWolves:IsOfficer() then
-            LunaWolves:Print("Nur Officers koennen eine DKP-Session starten/beenden.")
+            LunaWolves:Print("Nur Officers können eine DKP-Session starten/beenden.")
             return
         end
         if DKP.sessionActive then
@@ -676,7 +676,7 @@ function DKP:CreateUI()
     end)
     f.sessionBtn = sessionBtn
 
-    -- ESC schliesst das Fenster
+    -- ESC schließt das Fenster
     table.insert(UISpecialFrames, "LunaWolves_DKPFrame")
 end
 
@@ -754,7 +754,7 @@ function DKP:RefreshList()
 end
 
 -- Spielerklasse und Realm aus dem Gildenroster ermitteln
--- Gibt classFile, realm zurueck (realm = nil wenn gleicher Realm)
+-- Gibt classFile, realm zurück (realm = nil wenn gleicher Realm)
 function DKP:GetPlayerInfo(playerName)
     if not IsInGuild() then return nil, nil end
     local numMembers = GetNumGuildMembers()
@@ -810,7 +810,7 @@ function DKP:DeactivateSession(silent)
     self.sessionMapName = nil
 
     if not silent then
-        LunaWolves:Print("|cffff8800DKP-Session beendet.|r Bosskills zaehlen nicht mehr.")
+        LunaWolves:Print("|cffff8800DKP-Session beendet.|r Bosskills zählen nicht mehr.")
         LunaWolves:SendMessage("GUILD", "DKP", "SESSION", "off")
         if IsInRaid() then
             LunaWolves:SendMessage("RAID", "DKP", "SESSION", "off")
@@ -929,7 +929,7 @@ function DKP:CreateHistoryUI()
     f.title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
     f.title:SetPoint("TOP", f, "TOP", 0, -10)
 
-    -- Schliessen-Button
+    -- Schließen-Button
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
@@ -1013,7 +1013,7 @@ function DKP:CreateHistoryUI()
         end)
     end)
 
-    -- ESC schliesst das Fenster
+    -- ESC schließt das Fenster
     table.insert(UISpecialFrames, "LunaWolves_HistoryFrame")
 end
 
@@ -1064,7 +1064,7 @@ function DKP:RefreshHistoryList()
                 row.nameText:SetText(entry.player)
             end
 
-            -- Klassenfarbe fuer Name
+            -- Klassenfarbe für Name
             if classFile and CLASS_COLORS[classFile] then
                 local c = CLASS_COLORS[classFile]
                 row.nameText:SetTextColor(c.r, c.g, c.b)
@@ -1080,7 +1080,7 @@ function DKP:RefreshHistoryList()
 end
 
 -- ============================================================
--- Kontextmenue (Rechtsklick auf Spieler)
+-- Kontextmenü (Rechtsklick auf Spieler)
 -- ============================================================
 
 function DKP:ShowContextMenu(anchor, playerName)
@@ -1088,19 +1088,19 @@ function DKP:ShowContextMenu(anchor, playerName)
     MenuUtil.CreateContextMenu(anchor, function(ownerRegion, rootDescription)
         rootDescription:CreateTitle(playerName)
 
-        -- Punkte vergeben: nur fuer Officers aktiv, sonst ausgegraut
+        -- Punkte vergeben: nur für Officers aktiv, sonst ausgegraut
         local addBtn = rootDescription:CreateButton("Punkte vergeben", function()
             DKP:ShowInputDialog(playerName, "add")
         end)
         addBtn:SetEnabled(isOfficer)
 
-        -- Punkte abziehen: nur fuer Officers aktiv, sonst ausgegraut
+        -- Punkte abziehen: nur für Officers aktiv, sonst ausgegraut
         local subBtn = rootDescription:CreateButton("Punkte abziehen", function()
             DKP:ShowInputDialog(playerName, "sub")
         end)
         subBtn:SetEnabled(isOfficer)
 
-        -- History: fuer alle sichtbar und klickbar
+        -- History: für alle sichtbar und klickbar
         rootDescription:CreateButton("History anzeigen", function()
             DKP:HandleSlash("history " .. playerName)
         end)
@@ -1173,7 +1173,7 @@ function DKP:ShowInputDialog(playerName, action)
         d.cancelBtn:SetText("Abbrechen")
         d.cancelBtn:SetScript("OnClick", function() d:Hide() end)
 
-        -- ESC schliesst
+        -- ESC schließt
         d:SetScript("OnKeyDown", function(self, key)
             if key == "ESCAPE" then
                 self:Hide()
@@ -1197,7 +1197,7 @@ function DKP:ShowInputDialog(playerName, action)
         local amount = tonumber(d.amountBox:GetText()) or 0
         local reason = d.reasonBox:GetText()
         if amount <= 0 then
-            LunaWolves:Print("Bitte eine gueltige Anzahl eingeben.")
+            LunaWolves:Print("Bitte eine gültige Anzahl eingeben.")
             return
         end
         reason = (reason and reason ~= "") and reason or (isAdd and "Manuell" or "Abzug")

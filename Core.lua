@@ -16,8 +16,8 @@ LunaWolves.playerRealm = nil
 local ADDON_PREFIX = "LunaWolves"
 local SEND_QUEUE = {}
 local SEND_TIMER = nil
-local CHUNK_SIZE = 230           -- Platz fuer Header lassen
-local CHUNK_BUFFERS = {}         -- Empfangspuffer fuer Chunked-Nachrichten
+local CHUNK_SIZE = 230           -- Platz für Header lassen
+local CHUNK_BUFFERS = {}         -- Empfangspuffer für Chunked-Nachrichten
 
 -- ============================================================
 -- Hilfsfunktionen
@@ -29,7 +29,7 @@ function LunaWolves:Print(...)
     DEFAULT_CHAT_FRAME:AddMessage("|cff8888ff[LunaWolves]|r " .. msg)
 end
 
--- Kurze Spielernamen ohne Realm (fuer lokalen Server)
+-- Kurze Spielernamen ohne Realm (für lokalen Server)
 local function StripRealm(name)
     if not name then return nil end
     local short = strsplit("-", name)
@@ -193,7 +193,7 @@ function LunaWolves:HandleChunk(message, sender, channel)
     end
 end
 
--- Alte Chunk-Buffer aufraeumen (alle 30 Sekunden)
+-- Alte Chunk-Buffer aufräumen (alle 30 Sekunden)
 local function CleanupChunkBuffers()
     local now = GetTime()
     for key, buf in pairs(CHUNK_BUFFERS) do
@@ -215,7 +215,7 @@ function LunaWolves:IsOfficer(playerName)
     return rank ~= nil and rank <= threshold
 end
 
--- Gildenraenge cachen
+-- Gildenränge cachen
 function LunaWolves:ScanGuildRoster()
     if not IsInGuild() then return end
     local numMembers = GetNumGuildMembers()
@@ -254,27 +254,27 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         local threshold = tonumber(rest)
         if threshold then
             if not LunaWolves:IsOfficer() then
-                LunaWolves:Print("Nur Officers koennen die Schwelle aendern.")
+                LunaWolves:Print("Nur Officers können die Schwelle ändern.")
                 return
             end
             LunaWolvesDB.officerRankThreshold = threshold
             LunaWolves:Print("Officer-Rang-Schwelle auf " .. threshold .. " gesetzt.")
-            LunaWolves:Print("Raenge 0 bis " .. threshold .. " gelten jetzt als Officer.")
+            LunaWolves:Print("Ränge 0 bis " .. threshold .. " gelten jetzt als Officer.")
             -- An andere Officers broadcasten
             LunaWolves:SendMessage("GUILD", "CORE", "THRESHOLD", tostring(threshold))
         else
             LunaWolves:Print("Aktuell: Rang <= " .. (LunaWolvesDB.officerRankThreshold or 1) .. " = Officer")
-            LunaWolves:Print("Aendern: /lw officer <rang>")
-            LunaWolves:Print("Nutze /lw ranks um alle Gildenraenge zu sehen.")
+            LunaWolves:Print("Ändern: /lw officer <rang>")
+            LunaWolves:Print("Nutze /lw ranks um alle Gildenränge zu sehen.")
         end
     elseif cmd == "ranks" then
-        -- Alle Gildenraenge mit Namen auflisten
+        -- Alle Gildenränge mit Namen auflisten
         if not IsInGuild() then
             LunaWolves:Print("Du bist in keiner Gilde.")
             return
         end
         local threshold = LunaWolvesDB.officerRankThreshold or 1
-        LunaWolves:Print("--- Gildenraenge ---")
+        LunaWolves:Print("--- Gildenränge ---")
         for i = 0, GuildControlGetNumRanks() - 1 do
             local rankName = GuildControlGetRankName(i)
             local marker = ""
@@ -283,24 +283,24 @@ SlashCmdList["LUNAWOLVES"] = function(input)
             end
             LunaWolves:Print("  " .. i .. " = " .. rankName .. marker)
         end
-        LunaWolves:Print("Schwelle aendern: /lw officer <rang>")
+        LunaWolves:Print("Schwelle ändern: /lw officer <rang>")
     else
         LunaWolves:Print("--- LunaWolves Hilfe ---")
-        LunaWolves:Print("/lw dkp -- DKP-Verwaltung oeffnen")
+        LunaWolves:Print("/lw dkp -- DKP-Verwaltung öffnen")
         LunaWolves:Print("/lw dkp show [Name] -- DKP anzeigen")
         LunaWolves:Print("/lw dkp add Name Anzahl Grund -- Punkte vergeben")
         LunaWolves:Print("/lw dkp sub Name Anzahl Grund -- Punkte abziehen")
-        LunaWolves:Print("/lw dkp history [Name] -- History-Fenster oeffnen")
-        LunaWolves:Print("/lw dkp delete Name -- Spieler aus DKP loeschen")
+        LunaWolves:Print("/lw dkp history [Name] -- History-Fenster öffnen")
+        LunaWolves:Print("/lw dkp delete Name -- Spieler aus DKP löschen")
         LunaWolves:Print("/lw dkp on -- DKP-Session starten (nur im Schlachtzug)")
         LunaWolves:Print("/lw dkp off -- DKP-Session beenden")
         LunaWolves:Print("/lw dkp status -- Session-Status anzeigen")
         LunaWolves:Print("/lw dkp sync -- Sync erzwingen")
-        LunaWolves:Print("/lw raid -- Gruppen-Suche oeffnen")
+        LunaWolves:Print("/lw raid -- Gruppen-Suche öffnen")
         LunaWolves:Print("/lw raid create [Titel] -- Gruppe erstellen (Dialog oder direkt)")
-        LunaWolves:Print("/lw raid close -- Eigene Gruppe schliessen")
+        LunaWolves:Print("/lw raid close -- Eigene Gruppe schließen")
         LunaWolves:Print("/lw raid refresh -- Liste aktualisieren")
-        LunaWolves:Print("/lw ranks -- Gildenraenge anzeigen")
+        LunaWolves:Print("/lw ranks -- Gildenränge anzeigen")
         LunaWolves:Print("/lw officer <rang> -- Officer-Rang-Schwelle setzen")
     end
 end
@@ -374,7 +374,7 @@ local function CreateMinimapButton()
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("|cff8888ffLunaWolves|r", 1, 1, 1)
-        GameTooltip:AddLine("Linksklick: DKP oeffnen", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Linksklick: DKP öffnen", 0.7, 0.7, 0.7)
         GameTooltip:AddLine("Rechtsklick: Gruppen-Suche", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
@@ -423,12 +423,12 @@ local function CreateOptionsPanel()
     desc:SetWidth(550)
     desc:SetJustifyH("LEFT")
     desc:SetText(
-        "Gilden-Addon fuer 'The Last Luna Wolves'.\n\n" ..
+        "Gilden-Addon für 'The Last Luna Wolves'.\n\n" ..
         "Features:\n" ..
         "  - DKP-Punkteverwaltung mit automatischer Vergabe bei Bosskills\n" ..
         "  - Multi-Officer-Synchronisation\n" ..
         "  - Raid-Einladungssystem mit Benachrichtigungen\n\n" ..
-        "Befehle: /lw fuer eine Liste aller Kommandos."
+        "Befehle: /lw für eine Liste aller Kommandos."
     )
 
     -- Trennlinie
@@ -486,7 +486,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
         -- Addon-Prefix registrieren
         C_ChatInfo.RegisterAddonMessagePrefix(ADDON_PREFIX)
 
-        -- Gildenraenge scannen
+        -- Gildenränge scannen
         if IsInGuild() then
             C_GuildInfo.GuildRoster()  -- Fordert GUILD_ROSTER_UPDATE an
         end
@@ -510,7 +510,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.0.6 geladen. /lw fuer Hilfe.")
+        LunaWolves:Print("v1.0.7 geladen. /lw für Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()

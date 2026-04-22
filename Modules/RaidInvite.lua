@@ -1,11 +1,11 @@
 -- Modules/RaidInvite.lua
 -- LunaWolves Gruppen-/Raid-Suchsystem: Jeder Gildler kann Gruppen erstellen,
--- andere koennen anfragen oder (bei Auto-Accept) direkt beitreten.
+-- andere können anfragen oder (bei Auto-Accept) direkt beitreten.
 
 local RAID = {}
 
 local SOLID = "Interface\\Buttons\\WHITE8X8"
-local GROUP_TIMEOUT = 30 * 60    -- Gruppen nach 30 min Inaktivitaet verwerfen
+local GROUP_TIMEOUT = 30 * 60    -- Gruppen nach 30 min Inaktivität verwerfen
 local LIST_AUTO_REFRESH = 5      -- Auto-Refresh der Liste alle 5 Sekunden
 
 -- Klassenfarben (gleich wie in DKP.lua)
@@ -34,7 +34,7 @@ end
 
 -- Voller Spielername mit normalisiertem Realm (Cross-Realm-tauglich)
 -- Format: "Name-Realm" (Realm ohne Leerzeichen/Bindestriche)
--- Wird fuer C_PartyInfo.InviteUnit und gezielte WHISPER-Nachrichten gebraucht.
+-- Wird für C_PartyInfo.InviteUnit und gezielte WHISPER-Nachrichten gebraucht.
 local function GetFullName()
     local realm = GetNormalizedRealmName and GetNormalizedRealmName()
     if not realm or realm == "" then
@@ -43,7 +43,7 @@ local function GetFullName()
     return LunaWolves.playerName .. "-" .. realm
 end
 
--- Kurzname aus "Name-Realm" extrahieren (fuer Anzeige)
+-- Kurzname aus "Name-Realm" extrahieren (für Anzeige)
 local function ShortName(fullName)
     if not fullName then return "" end
     local short = strsplit("-", fullName)
@@ -81,14 +81,14 @@ function RAID:OnEnable()
     self:CreateManagerUI()
     self:CreateRequestUI()
 
-    -- Beim Login (leicht verzoegert) die Liste aller aktiven Gruppen abfragen
+    -- Beim Login (leicht verzögert) die Liste aller aktiven Gruppen abfragen
     C_Timer.After(3, function()
         if IsInGuild() then
             LunaWolves:SendMessage("GUILD", "RAID", "LISTREQ", "")
         end
     end)
 
-    -- Regelmaessiger Cleanup alter Gruppen
+    -- Regelmäßiger Cleanup alter Gruppen
     C_Timer.NewTicker(60, function()
         RAID:PruneGroups()
     end)
@@ -115,7 +115,7 @@ function RAID:OnMessage(command, payload, sender, channel)
 end
 
 -- ============================================================
--- Gruppe erstellen / schliessen
+-- Gruppe erstellen / schließen
 -- ============================================================
 
 function RAID:CreateGroup(groupType, title, autoAccept)
@@ -131,7 +131,7 @@ function RAID:CreateGroup(groupType, title, autoAccept)
         groupType = "PARTY"
     end
 
-    -- Bestehende eigene Gruppe zuerst schliessen
+    -- Bestehende eigene Gruppe zuerst schließen
     if self.myGroupId then
         self:CloseMyGroup(true)
     end
@@ -202,11 +202,11 @@ function RAID:HandleAnnounce(payload, sender)
     local id, creator, class, gtype, title, autoAccept, ts = strsplit(";", payload)
     if not id or not creator then return end
 
-    -- Creator muss mit Sender uebereinstimmen (Anti-Spoof light)
+    -- Creator muss mit Sender übereinstimmen (Anti-Spoof light)
     -- creator ist Name-Realm (neu ab 1.0.6), sender ist Kurzname von Core
     if ShortName(creator) ~= sender then return end
 
-    -- Meine eigene Gruppe nicht doppelt hinzufuegen
+    -- Meine eigene Gruppe nicht doppelt hinzufügen
     if ShortName(creator) == LunaWolves.playerName and RealmOf(creator) == RealmOf(GetFullName()) then return end
 
     local existing = self.activeGroups[id]
@@ -229,7 +229,7 @@ function RAID:HandleListReq(payload, sender)
     if not self.myGroupId then return end
     local group = self.activeGroups[self.myGroupId]
     if not group then return end
-    -- Leicht verzoegerte Antwort um Spam zu vermeiden
+    -- Leicht verzögerte Antwort um Spam zu vermeiden
     C_Timer.After(math.random() * 2, function()
         if self.activeGroups[self.myGroupId] then
             self:BroadcastAnnounce(self.activeGroups[self.myGroupId])
@@ -242,10 +242,10 @@ function RAID:HandleClose(payload, sender)
     if not id then return end
     local group = self.activeGroups[id]
     if not group then return end
-    -- Nur Ersteller darf schliessen (creator ist Name-Realm, sender ist Kurzname)
+    -- Nur Ersteller darf schließen (creator ist Name-Realm, sender ist Kurzname)
     if ShortName(group.creator) ~= sender then return end
     self.activeGroups[id] = nil
-    -- Hatte ich diese Gruppe angefragt? Infos aufraeumen
+    -- Hatte ich diese Gruppe angefragt? Infos aufräumen
     self:RefreshList()
 end
 
@@ -257,7 +257,7 @@ end
 function RAID:RequestJoin(groupId)
     local group = self.activeGroups[groupId]
     if not group then
-        LunaWolves:Print("Gruppe nicht mehr verfuegbar.")
+        LunaWolves:Print("Gruppe nicht mehr verfügbar.")
         return
     end
     if group.creator == GetFullName() then
@@ -289,7 +289,7 @@ function RAID:RequestJoin(groupId)
     end
 end
 
--- Ersteller empfaengt eine Anfrage
+-- Ersteller empfängt eine Anfrage
 function RAID:HandleRequest(payload, sender)
     local groupId, player, class, spec = strsplit(";", payload)
     if not groupId or not player then return end
@@ -317,7 +317,7 @@ function RAID:HandleRequest(payload, sender)
             timestamp = time(),
         }
         self:ShowRequestPopup(player, class, spec)
-        LunaWolves:Print(ShortName(player) .. " moechte deiner Gruppe beitreten.")
+        LunaWolves:Print(ShortName(player) .. " möchte deiner Gruppe beitreten.")
         self:RefreshManager()
     end
 end
@@ -373,7 +373,7 @@ function RAID:HandleReject(payload, sender)
     local groupId, reason = strsplit(";", payload)
     local group = self.activeGroups[groupId]
     local title = group and group.title or "Gruppe"
-    LunaWolves:Print(sender .. " hat deine Anfrage fuer '" .. title .. "' abgelehnt" ..
+    LunaWolves:Print(sender .. " hat deine Anfrage für '" .. title .. "' abgelehnt" ..
         (reason and reason ~= "" and (" (" .. reason .. ")") or "") .. ".")
 end
 
@@ -464,7 +464,7 @@ function RAID:CreateListUI()
     f.titleText:SetPoint("TOP", f, "TOP", 0, -10)
     f.titleText:SetText("|cff8888ffGilden-Gruppensuche|r")
 
-    -- Schliessen
+    -- Schließen
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
@@ -560,7 +560,7 @@ function RAID:CreateListUI()
     local closeBtn2 = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     closeBtn2:SetSize(110, 26)
     closeBtn2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -20, 12)
-    closeBtn2:SetText("Schliessen")
+    closeBtn2:SetText("Schließen")
     closeBtn2:SetScript("OnClick", function()
         f:Hide()
     end)
@@ -575,7 +575,7 @@ function RAID:CreateListUI()
         end
     end)
 
-    -- ESC schliesst
+    -- ESC schließt
     table.insert(UISpecialFrames, "LunaWolves_GroupList")
 end
 
@@ -624,7 +624,7 @@ function RAID:RefreshList()
             -- Slots
             local memberCount = 0
             for _ in pairs(g.members) do memberCount = memberCount + 1 end
-            -- +1 weil Ersteller auch zaehlt
+            -- +1 weil Ersteller auch zählt
             local total = memberCount + 1
             local max = g.type == "RAID" and 40 or 5
             row.slotsText:SetText(total .. "/" .. max .. (g.autoAccept and " |cff88ff88A|r" or ""))
@@ -811,7 +811,7 @@ end
 function RAID:ShowCreateDialog()
     if not self.createFrame then self:CreateCreateUI() end
     local f = self.createFrame
-    -- Standardwerte zuruecksetzen
+    -- Standardwerte zurücksetzen
     f.partyRadio:SetChecked(true)
     f.raidRadio:SetChecked(false)
     f.autoCheck:SetChecked(false)
@@ -821,7 +821,7 @@ function RAID:ShowCreateDialog()
 end
 
 -- ============================================================
--- UI: Manager-Fenster (fuer Ersteller)
+-- UI: Manager-Fenster (für Ersteller)
 -- ============================================================
 
 function RAID:CreateManagerUI()
@@ -850,7 +850,7 @@ function RAID:CreateManagerUI()
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
-    -- Auto-Accept-Toggle (live aenderbar)
+    -- Auto-Accept-Toggle (live änderbar)
     local autoCheck = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
     autoCheck:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
     autoCheck.text = autoCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -942,7 +942,7 @@ function RAID:CreateManagerUI()
     local closeGroupBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     closeGroupBtn:SetSize(140, 26)
     closeGroupBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -20, 12)
-    closeGroupBtn:SetText("Gruppe schliessen")
+    closeGroupBtn:SetText("Gruppe schließen")
     closeGroupBtn:SetScript("OnClick", function()
         RAID:CloseMyGroup(false)
     end)
@@ -1004,7 +1004,7 @@ function RAID:RefreshManager()
             local myRealm = RealmOf(GetFullName())
             local realmSuffix = (nameRealm ~= "" and nameRealm ~= myRealm) and ("|cff777777-" .. nameRealm .. "|r") or ""
             if color then
-                row.nameText:SetTextColor(1, 1, 1)  -- Farbe ueber Hex-Code setzen
+                row.nameText:SetTextColor(1, 1, 1)  -- Farbe über Hex-Code setzen
                 row.nameText:SetText(ClassColorCode(e.class) .. nameShort .. "|r" .. realmSuffix)
             else
                 row.nameText:SetTextColor(1, 1, 1)
