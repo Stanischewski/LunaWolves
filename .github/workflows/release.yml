@@ -1,0 +1,60 @@
+name: Build Release ZIP
+
+# Läuft wenn ein Tag im Format "v*" (z.B. v1.0.7) gepusht wird.
+# Erstellt ein ZIP mit der Addon-Struktur und hängt es an den passenden Release.
+# Falls der Release noch nicht existiert, wird er automatisch erstellt.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Version aus Tag extrahieren
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Version in .toc verifizieren
+        run: |
+          TOC_VERSION=$(grep -oP '^## Version:\s*\K\S+' LunaWolves.toc)
+          EXPECTED="${{ steps.version.outputs.version }}"
+          if [ "$TOC_VERSION" != "$EXPECTED" ]; then
+            echo "::warning::Tag=$EXPECTED stimmt nicht mit .toc-Version=$TOC_VERSION überein"
+          fi
+
+      - name: ZIP mit Addon-Struktur bauen
+        run: |
+          mkdir -p build/LunaWolves/Modules
+          cp Core.lua LunaWolves.toc icon.tga pkgmeta.yaml build/LunaWolves/
+          cp Modules/DKP.lua Modules/RaidInvite.lua build/LunaWolves/Modules/
+          cd build
+          zip -r ../LunaWolves.zip LunaWolves
+          cd ..
+          unzip -l LunaWolves.zip
+
+      - name: Release erstellen oder aktualisieren
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG existiert bereits – Asset wird ersetzt."
+            gh release upload "$TAG" LunaWolves.zip --clobber
+          else
+            echo "Release $TAG wird erstellt."
+            gh release create "$TAG" LunaWolves.zip \
+              --title "$TAG" \
+              --generate-notes
+          fi

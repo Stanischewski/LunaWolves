@@ -1,0 +1,14 @@
+# Lokal gebautes Release-ZIP (wird von GitHub Actions erzeugt)
+LunaWolves.zip
+
+# Build-Artefakte des Installers
+Installer/bin/
+Installer/obj/
+Installer/*.exe
+
+# Editor-/OS-Dateien
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
