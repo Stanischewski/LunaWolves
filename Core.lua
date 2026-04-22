@@ -292,6 +292,9 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw dkp sub Name Anzahl Grund -- Punkte abziehen")
         LunaWolves:Print("/lw dkp history [Name] -- History-Fenster oeffnen")
         LunaWolves:Print("/lw dkp delete Name -- Spieler aus DKP loeschen")
+        LunaWolves:Print("/lw dkp on -- DKP-Session starten (nur im Schlachtzug)")
+        LunaWolves:Print("/lw dkp off -- DKP-Session beenden")
+        LunaWolves:Print("/lw dkp status -- Session-Status anzeigen")
         LunaWolves:Print("/lw dkp sync -- Sync erzwingen")
         LunaWolves:Print("/lw raid create Titel -- Raid-Event erstellen")
         LunaWolves:Print("/lw raid close -- Anmeldungen schliessen")
@@ -506,7 +509,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.0.3 geladen. /lw fuer Hilfe.")
+        LunaWolves:Print("v1.0.4 geladen. /lw fuer Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()

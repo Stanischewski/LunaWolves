@@ -41,12 +41,34 @@ function DKP:OnEnable()
     LunaWolvesDB.DKP.pointsPerKill = LunaWolvesDB.DKP.pointsPerKill or 10
     LunaWolvesDB.DKP.lastSyncTimestamp = LunaWolvesDB.DKP.lastSyncTimestamp or 0
 
+    -- Session-Zustand (nicht in SavedVariables -- wird nicht gespeichert)
+    self.sessionActive  = false
+    self.sessionMapID   = nil
+    self.sessionMapName = nil
+
     -- WoW-Events registrieren
     self.eventFrame = CreateFrame("Frame")
     self.eventFrame:RegisterEvent("ENCOUNTER_END")
+    self.eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    self.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     self.eventFrame:SetScript("OnEvent", function(_, event, ...)
         if event == "ENCOUNTER_END" then
             DKP:OnEncounterEnd(...)
+        elseif event == "GROUP_ROSTER_UPDATE" then
+            -- Session automatisch beenden wenn nicht mehr im Schlachtzug
+            if DKP.sessionActive and not IsInRaid() then
+                DKP:DeactivateSession(true)
+                LunaWolves:Print("DKP-Session automatisch beendet -- Schlachtzug aufgeloest.")
+            end
+        elseif event == "PLAYER_ENTERING_WORLD" then
+            -- Session beenden wenn in andere Instanz gewechselt
+            if DKP.sessionActive then
+                local _, _, _, _, _, _, _, mapID = GetInstanceInfo()
+                if mapID ~= DKP.sessionMapID then
+                    DKP:DeactivateSession(true)
+                    LunaWolves:Print("DKP-Session automatisch beendet -- Instanz verlassen.")
+                end
+            end
         end
     end)
 
@@ -193,6 +215,9 @@ end
 
 -- Deterministische Officer-Election: alphabetisch erster Officer im Raid
 function DKP:ShouldAutoAward()
+    -- Session muss aktiv sein (Officer hat /lw dkp on eingegeben)
+    if not self.sessionActive then return false end
+
     local myName = LunaWolves.playerName
     if not LunaWolves:IsOfficer(myName) then return false end
 
@@ -249,6 +274,8 @@ function DKP:OnMessage(command, payload, sender, channel)
         self:HandleSyncResponse(payload, sender)
     elseif command == "DELETE" then
         self:HandleDelete(payload, sender)
+    elseif command == "SESSION" then
+        self:HandleSession(payload, sender)
     end
 end
 
@@ -433,6 +460,27 @@ function DKP:HandleSlash(input)
             self:RefreshList()
         end
 
+    elseif cmd == "on" then
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers koennen eine DKP-Session starten.")
+            return
+        end
+        self:ActivateSession()
+
+    elseif cmd == "off" then
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers koennen eine DKP-Session beenden.")
+            return
+        end
+        self:DeactivateSession()
+
+    elseif cmd == "status" then
+        if self.sessionActive then
+            LunaWolves:Print("|cff00ff00DKP-Session aktiv:|r " .. (self.sessionMapName or "Unbekannt"))
+        else
+            LunaWolves:Print("|cffaaaaaa DKP-Session inaktiv. Starten mit: /lw dkp on|r")
+        end
+
     elseif cmd == "setboss" then
         -- Punkte pro Bosskill konfigurieren
         local val = tonumber(rest)
@@ -460,7 +508,7 @@ function DKP:CreateUI()
 
     -- Hauptfenster
     local f = CreateFrame("Frame", "LunaWolves_DKPFrame", UIParent, "BackdropTemplate")
-    f:SetSize(LIST_WIDTH + 40, ROW_HEIGHT * VISIBLE_ROWS + 100)
+    f:SetSize(LIST_WIDTH + 40, ROW_HEIGHT * VISIBLE_ROWS + 120)
     f:SetPoint("CENTER")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -510,7 +558,7 @@ function DKP:CreateUI()
     -- Scroll-Frame
     local scrollFrame = CreateFrame("ScrollFrame", "LunaWolves_DKPScroll", f, "FauxScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 15, headerY - 20)
-    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -35, 40)
+    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -35, 65)
     self.scrollFrame = scrollFrame
 
     -- Zeilen erstellen
@@ -576,10 +624,25 @@ function DKP:CreateUI()
         end)
     end)
 
+    -- Session-Status-Label (untere Leiste, volle Breite)
+    local sessionLabel = f:CreateFontString(nil, "OVERLAY")
+    sessionLabel:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    sessionLabel:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 15, 13)
+    sessionLabel:SetText("|cffaaaaaa●|r Kein aktiver Schlachtzug  (/lw dkp on)")
+    sessionLabel:SetTextColor(1, 1, 1)
+    f.sessionLabel = sessionLabel
+
+    -- Trennlinie ueber Buttons
+    local btnSep = f:CreateTexture(nil, "ARTWORK")
+    btnSep:SetTexture(SOLID)
+    btnSep:SetVertexColor(0.4, 0.4, 0.6, 0.4)
+    btnSep:SetSize(LIST_WIDTH, 1)
+    btnSep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 34)
+
     -- Sync-Button
     local syncBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     syncBtn:SetSize(80, 22)
-    syncBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 15, 10)
+    syncBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 15, 38)
     syncBtn:SetText("Sync")
     syncBtn:SetScript("OnClick", function()
         DKP:RequestSync()
@@ -594,6 +657,24 @@ function DKP:CreateUI()
     histBtn:SetScript("OnClick", function()
         DKP:ShowHistoryUI(nil)
     end)
+
+    -- Session-Button (fuer Officers -- Status fuer alle sichtbar)
+    local sessionBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    sessionBtn:SetSize(120, 22)
+    sessionBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 38)
+    sessionBtn:SetText("Session starten")
+    sessionBtn:SetScript("OnClick", function()
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers koennen eine DKP-Session starten/beenden.")
+            return
+        end
+        if DKP.sessionActive then
+            DKP:DeactivateSession()
+        else
+            DKP:ActivateSession()
+        end
+    end)
+    f.sessionBtn = sessionBtn
 
     -- ESC schliesst das Fenster
     table.insert(UISpecialFrames, "LunaWolves_DKPFrame")
@@ -687,6 +768,102 @@ function DKP:GetPlayerInfo(playerName)
         end
     end
     return nil, nil
+end
+
+-- ============================================================
+-- Session-Verwaltung
+-- ============================================================
+
+function DKP:ActivateSession()
+    if not IsInRaid() then
+        LunaWolves:Print("Du musst in einem Schlachtzug sein um eine DKP-Session zu starten.")
+        return
+    end
+    local mapName, _, _, _, _, _, _, mapID = GetInstanceInfo()
+    mapName = (mapName and mapName ~= "") and mapName or "Schlachtzug"
+
+    self.sessionActive  = true
+    self.sessionMapID   = mapID
+    self.sessionMapName = mapName
+
+    LunaWolves:Print("|cff00ff00DKP-Session gestartet:|r " .. mapName)
+    LunaWolves:Print("Bosskills vergeben jetzt automatisch DKP. Beenden mit: /lw dkp off")
+
+    -- An alle Officers in Gilde und Raid syncen
+    local payload = "on;" .. mapName .. ";" .. tostring(mapID)
+    LunaWolves:SendMessage("GUILD", "DKP", "SESSION", payload)
+    LunaWolves:SendMessage("RAID",  "DKP", "SESSION", payload)
+
+    self:UpdateSessionStatus()
+end
+
+function DKP:DeactivateSession(silent)
+    if not self.sessionActive then
+        if not silent then
+            LunaWolves:Print("Keine aktive DKP-Session.")
+        end
+        return
+    end
+
+    self.sessionActive  = false
+    self.sessionMapID   = nil
+    self.sessionMapName = nil
+
+    if not silent then
+        LunaWolves:Print("|cffff8800DKP-Session beendet.|r Bosskills zaehlen nicht mehr.")
+        LunaWolves:SendMessage("GUILD", "DKP", "SESSION", "off")
+        if IsInRaid() then
+            LunaWolves:SendMessage("RAID", "DKP", "SESSION", "off")
+        end
+    end
+
+    self:UpdateSessionStatus()
+end
+
+function DKP:HandleSession(payload, sender)
+    -- Nur von Officers akzeptieren
+    if not LunaWolves:IsOfficer(sender) then return end
+
+    local state, mapName, mapID = strsplit(";", payload)
+
+    if state == "on" then
+        self.sessionActive  = true
+        self.sessionMapName = mapName
+        self.sessionMapID   = tonumber(mapID)
+        LunaWolves:Print("|cff00ff00DKP-Session gestartet von " .. sender .. ":|r " .. (mapName or ""))
+    elseif state == "off" then
+        self.sessionActive  = false
+        self.sessionMapName = nil
+        self.sessionMapID   = nil
+        LunaWolves:Print("|cffff8800DKP-Session beendet von " .. sender .. ".|r")
+    end
+
+    self:UpdateSessionStatus()
+end
+
+-- Status-Anzeige im DKP-Fenster aktualisieren
+function DKP:UpdateSessionStatus()
+    if not self.mainFrame then return end
+
+    local label = self.mainFrame.sessionLabel
+    if label then
+        if self.sessionActive then
+            label:SetText("|cff00ff00●|r Session aktiv -- " .. (self.sessionMapName or "Schlachtzug"))
+            label:SetTextColor(1, 1, 1)
+        else
+            label:SetText("|cffaaaaaa●|r Kein aktiver Schlachtzug  (/lw dkp on)")
+            label:SetTextColor(1, 1, 1)
+        end
+    end
+
+    local btn = self.mainFrame.sessionBtn
+    if btn then
+        if self.sessionActive then
+            btn:SetText("Session beenden")
+        else
+            btn:SetText("Session starten")
+        end
+    end
 end
 
 -- ============================================================
