@@ -32,6 +32,31 @@ local function ClassColorCode(classFile)
     return string.format("|cff%02x%02x%02x", c.r * 255, c.g * 255, c.b * 255)
 end
 
+-- Voller Spielername mit normalisiertem Realm (Cross-Realm-tauglich)
+-- Format: "Name-Realm" (Realm ohne Leerzeichen/Bindestriche)
+-- Wird fuer C_PartyInfo.InviteUnit und gezielte WHISPER-Nachrichten gebraucht.
+local function GetFullName()
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then
+        realm = (GetRealmName() or ""):gsub("[%s%-]", "")
+    end
+    return LunaWolves.playerName .. "-" .. realm
+end
+
+-- Kurzname aus "Name-Realm" extrahieren (fuer Anzeige)
+local function ShortName(fullName)
+    if not fullName then return "" end
+    local short = strsplit("-", fullName)
+    return short or fullName
+end
+
+-- Realm aus "Name-Realm" extrahieren (leer wenn kein Realm im Namen)
+local function RealmOf(fullName)
+    if not fullName then return "" end
+    local _, realm = strsplit("-", fullName, 2)
+    return realm or ""
+end
+
 -- ============================================================
 -- Initialisierung
 -- ============================================================
@@ -116,7 +141,7 @@ function RAID:CreateGroup(groupType, title, autoAccept)
 
     local group = {
         id = groupId,
-        creator = LunaWolves.playerName,
+        creator = GetFullName(),  -- Name-Realm, damit Whisper/Invite cross-realm klappt
         creatorClass = classFile or "UNKNOWN",
         type = groupType,
         title = title,
@@ -178,10 +203,11 @@ function RAID:HandleAnnounce(payload, sender)
     if not id or not creator then return end
 
     -- Creator muss mit Sender uebereinstimmen (Anti-Spoof light)
-    if creator ~= sender then return end
+    -- creator ist Name-Realm (neu ab 1.0.6), sender ist Kurzname von Core
+    if ShortName(creator) ~= sender then return end
 
     -- Meine eigene Gruppe nicht doppelt hinzufuegen
-    if creator == LunaWolves.playerName then return end
+    if ShortName(creator) == LunaWolves.playerName and RealmOf(creator) == RealmOf(GetFullName()) then return end
 
     local existing = self.activeGroups[id]
     self.activeGroups[id] = {
@@ -216,8 +242,8 @@ function RAID:HandleClose(payload, sender)
     if not id then return end
     local group = self.activeGroups[id]
     if not group then return end
-    -- Nur Ersteller darf schliessen
-    if group.creator ~= sender then return end
+    -- Nur Ersteller darf schliessen (creator ist Name-Realm, sender ist Kurzname)
+    if ShortName(group.creator) ~= sender then return end
     self.activeGroups[id] = nil
     -- Hatte ich diese Gruppe angefragt? Infos aufraeumen
     self:RefreshList()
@@ -234,7 +260,7 @@ function RAID:RequestJoin(groupId)
         LunaWolves:Print("Gruppe nicht mehr verfuegbar.")
         return
     end
-    if group.creator == LunaWolves.playerName then
+    if group.creator == GetFullName() then
         LunaWolves:Print("Das ist deine eigene Gruppe.")
         return
     end
@@ -246,9 +272,10 @@ function RAID:RequestJoin(groupId)
         specName = select(2, GetSpecializationInfo(specIndex)) or ""
     end
 
+    -- Voller Name mit Realm, damit Cross-Realm-Invite beim Ersteller funktioniert
     local payload = table.concat({
         groupId,
-        LunaWolves.playerName,
+        GetFullName(),
         classFile or "UNKNOWN",
         specName,
     }, ";")
@@ -256,9 +283,9 @@ function RAID:RequestJoin(groupId)
     LunaWolves:SendMessage("WHISPER", "RAID", "REQUEST", payload, group.creator)
 
     if group.autoAccept then
-        LunaWolves:Print("Beitrittsanfrage an " .. group.creator .. " gesendet (Auto-Annahme).")
+        LunaWolves:Print("Beitrittsanfrage an " .. ShortName(group.creator) .. " gesendet (Auto-Annahme).")
     else
-        LunaWolves:Print("Beitrittsanfrage an " .. group.creator .. " gesendet.")
+        LunaWolves:Print("Beitrittsanfrage an " .. ShortName(group.creator) .. " gesendet.")
     end
 end
 
@@ -290,7 +317,7 @@ function RAID:HandleRequest(payload, sender)
             timestamp = time(),
         }
         self:ShowRequestPopup(player, class, spec)
-        LunaWolves:Print(player .. " moechte deiner Gruppe beitreten.")
+        LunaWolves:Print(ShortName(player) .. " moechte deiner Gruppe beitreten.")
         self:RefreshManager()
     end
 end
@@ -318,7 +345,7 @@ function RAID:AcceptRequest(player, class, spec)
     LunaWolves:SendMessage("WHISPER", "RAID", "ACCEPT", group.id, player)
     C_PartyInfo.InviteUnit(player)
 
-    LunaWolves:Print(player .. " angenommen und eingeladen.")
+    LunaWolves:Print(ShortName(player) .. " angenommen und eingeladen.")
     self:RefreshManager()
 end
 
@@ -328,7 +355,7 @@ function RAID:RejectRequest(player)
     if not pending then return end
     LunaWolves:SendMessage("WHISPER", "RAID", "REJECT", pending.groupId .. ";voll", player)
     self.pendingRequests[player] = nil
-    LunaWolves:Print(player .. " abgelehnt.")
+    LunaWolves:Print(ShortName(player) .. " abgelehnt.")
     self:RefreshManager()
 end
 
@@ -576,8 +603,12 @@ function RAID:RefreshList()
     for i, row in ipairs(f.rows) do
         local g = list[i]
         if g then
-            -- Ersteller (Klassenfarbe)
-            row.creatorText:SetText(ClassColorCode(g.creatorClass) .. g.creator .. "|r")
+            -- Ersteller (Klassenfarbe) + Realm-Suffix bei Cross-Realm
+            local creatorShort = ShortName(g.creator)
+            local creatorRealm = RealmOf(g.creator)
+            local myRealm = RealmOf(GetFullName())
+            local realmSuffix = (creatorRealm ~= "" and creatorRealm ~= myRealm) and ("|cff777777-" .. creatorRealm .. "|r") or ""
+            row.creatorText:SetText(ClassColorCode(g.creatorClass) .. creatorShort .. "|r" .. realmSuffix)
 
             -- Typ
             if g.type == "RAID" then
@@ -600,7 +631,7 @@ function RAID:RefreshList()
 
             -- Action-Button: Eigene Gruppe -> Verwalten; sonst Beitreten/Anfragen
             row.actionBtn:SetScript("OnClick", nil)
-            if g.creator == LunaWolves.playerName then
+            if g.creator == GetFullName() then
                 row.actionBtn:SetText("Verwalten")
                 row.actionBtn:Enable()
                 row.actionBtn:SetScript("OnClick", function()
@@ -966,14 +997,19 @@ function RAID:RefreshManager()
     for i, row in ipairs(f.rows) do
         local e = entries[i]
         if e then
-            -- Name mit Klassenfarbe
+            -- Name mit Klassenfarbe (+ Realm-Suffix bei Cross-Realm)
             local color = CLASS_COLORS[e.class]
+            local nameShort = ShortName(e.name)
+            local nameRealm = RealmOf(e.name)
+            local myRealm = RealmOf(GetFullName())
+            local realmSuffix = (nameRealm ~= "" and nameRealm ~= myRealm) and ("|cff777777-" .. nameRealm .. "|r") or ""
             if color then
-                row.nameText:SetTextColor(color.r, color.g, color.b)
+                row.nameText:SetTextColor(1, 1, 1)  -- Farbe ueber Hex-Code setzen
+                row.nameText:SetText(ClassColorCode(e.class) .. nameShort .. "|r" .. realmSuffix)
             else
                 row.nameText:SetTextColor(1, 1, 1)
+                row.nameText:SetText(nameShort .. realmSuffix)
             end
-            row.nameText:SetText(e.name)
 
             row.specText:SetText(e.spec or "")
             if color then
@@ -1056,7 +1092,11 @@ function RAID:ShowRequestPopup(player, class, spec)
 
     local color = ClassColorCode(class)
     local specPart = (spec and spec ~= "" and (spec .. " ") or "")
-    f.infoText:SetText(color .. player .. "|r\n" .. specPart .. (class or ""))
+    local nameShort = ShortName(player)
+    local nameRealm = RealmOf(player)
+    local myRealm = RealmOf(GetFullName())
+    local realmSuffix = (nameRealm ~= "" and nameRealm ~= myRealm) and ("|cff777777-" .. nameRealm .. "|r") or ""
+    f.infoText:SetText(color .. nameShort .. "|r" .. realmSuffix .. "\n" .. specPart .. (class or ""))
 
     f.acceptBtn:SetScript("OnClick", function()
         RAID:AcceptRequest(player, class, spec)
