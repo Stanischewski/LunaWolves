@@ -1,8 +1,8 @@
 ## Interface: 120001
 ## Title: LunaWolves
-## Notes: Gilden-Addon fuer The Last Luna Wolves -- DKP, Raid-Einladungen und mehr
+## Notes: Gilden-Addon für The Last Luna Wolves -- DKP, Gruppen-Suche, Versionsübersicht
 ## Author: The Last Luna Wolves
-## Version: 1.0.7
+## Version: 1.0.8
 ## SavedVariables: LunaWolvesDB
 ## X-Website: https://github.com/Stanischewski/LunaWolves
 ## X-Wago-ID: rN4kexGD
@@ -10,3 +10,4 @@
 Core.lua
 Modules/DKP.lua
 Modules/RaidInvite.lua
+Modules/Versions.lua

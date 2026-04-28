@@ -249,6 +249,11 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         if mod and mod.HandleSlash then
             mod:HandleSlash(rest)
         end
+    elseif cmd == "versions" or cmd == "ver" then
+        local mod = LunaWolves:GetModule("VER")
+        if mod and mod.HandleSlash then
+            mod:HandleSlash(rest or "")
+        end
     elseif cmd == "officer" then
         -- Officer-Rang-Schwelle setzen (nur Officers!)
         local threshold = tonumber(rest)
@@ -300,6 +305,8 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw raid create [Titel] -- Gruppe erstellen (Dialog oder direkt)")
         LunaWolves:Print("/lw raid close -- Eigene Gruppe schließen")
         LunaWolves:Print("/lw raid refresh -- Liste aktualisieren")
+        LunaWolves:Print("/lw versions -- Versionsübersicht aller Gildler")
+        LunaWolves:Print("/lw versions share -- BattleTag-Sharing umschalten")
         LunaWolves:Print("/lw ranks -- Gildenränge anzeigen")
         LunaWolves:Print("/lw officer <rang> -- Officer-Rang-Schwelle setzen")
     end
@@ -375,7 +382,7 @@ local function CreateMinimapButton()
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("|cff8888ffLunaWolves|r", 1, 1, 1)
         GameTooltip:AddLine("Linksklick: DKP öffnen", 0.7, 0.7, 0.7)
-        GameTooltip:AddLine("Rechtsklick: Gruppen-Suche", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Rechtsklick: Menü", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function()
@@ -385,15 +392,32 @@ local function CreateMinimapButton()
     -- Klick-Aktionen
     btn:SetScript("OnClick", function(self, button)
         if button == "LeftButton" then
+            -- Direkter DKP-Schnellzugriff
             local dkp = LunaWolves:GetModule("DKP")
             if dkp and dkp.ToggleUI then
                 dkp:ToggleUI()
             end
         elseif button == "RightButton" then
-            local raid = LunaWolves:GetModule("RAID")
-            if raid and raid.ShowGroupList then
-                raid:ShowGroupList()
-            end
+            -- Modul-Auswahl per Dropdown
+            MenuUtil.CreateContextMenu(self, function(ownerRegion, root)
+                root:CreateTitle("|cff8888ffLunaWolves|r")
+                root:CreateButton("DKP-Verwaltung", function()
+                    local m = LunaWolves:GetModule("DKP")
+                    if m and m.ToggleUI then m:ToggleUI() end
+                end)
+                root:CreateButton("Gruppen-Suche", function()
+                    local m = LunaWolves:GetModule("RAID")
+                    if m and m.ShowGroupList then m:ShowGroupList() end
+                end)
+                root:CreateButton("Versionsübersicht", function()
+                    local m = LunaWolves:GetModule("VER")
+                    if m and m.ShowList then m:ShowList() end
+                end)
+                root:CreateDivider()
+                root:CreateButton("Hilfe (/lw)", function()
+                    SlashCmdList["LUNAWOLVES"]("")
+                end)
+            end)
         end
     end)
 
@@ -460,6 +484,77 @@ local function CreateOptionsPanel()
     minimapDesc:SetPoint("TOPLEFT", minimapCheck, "BOTTOMLEFT", 26, -2)
     minimapDesc:SetText("|cff999999Das LunaWolves-Icon am Minimap-Rand ein-/ausblenden.|r")
 
+    -- ============================================================
+    -- Battle.net-Tag teilen (Versions-Modul)
+    -- ============================================================
+
+    local btagCheck = CreateFrame("CheckButton", "LunaWolves_Opt_ShareBTag", panel, "InterfaceOptionsCheckButtonTemplate")
+    btagCheck:SetPoint("TOPLEFT", minimapDesc, "BOTTOMLEFT", -26, -16)
+    btagCheck.Text:SetText("Battle.net-Tag mit Gilde teilen")
+    btagCheck:SetChecked(LunaWolvesDB and LunaWolvesDB.shareBattleTag ~= false)
+    btagCheck:SetScript("OnClick", function(self)
+        LunaWolvesDB.shareBattleTag = self:GetChecked() and true or false
+        local mod = LunaWolves:GetModule("VER")
+        if mod and mod.BroadcastHello then mod:BroadcastHello() end
+    end)
+
+    local btagDesc = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    btagDesc:SetPoint("TOPLEFT", btagCheck, "BOTTOMLEFT", 26, -2)
+    btagDesc:SetWidth(540)
+    btagDesc:SetJustifyH("LEFT")
+    btagDesc:SetText("|cff999999In der Versionsübersicht erkennbar machen, welche Chars zur selben Person gehören.\nWenn deaktiviert, erscheinen deine Chars als '(privat)'.|r")
+
+    -- ============================================================
+    -- Lösch-Sicherung (DKP-Modul)
+    -- ============================================================
+
+    local divider2 = panel:CreateTexture(nil, "ARTWORK")
+    divider2:SetHeight(1)
+    divider2:SetPoint("TOPLEFT", btagDesc, "BOTTOMLEFT", -26, -16)
+    divider2:SetPoint("RIGHT", panel, "RIGHT", -16, 0)
+    divider2:SetColorTexture(0.5, 0.5, 0.5, 0.3)
+
+    local safetyHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    safetyHeader:SetPoint("TOPLEFT", divider2, "BOTTOMLEFT", 0, -10)
+    safetyHeader:SetText("|cffff8888Lösch-Sicherung|r")
+
+    local safetyCheck = CreateFrame("CheckButton", "LunaWolves_Opt_DeleteSafety", panel, "InterfaceOptionsCheckButtonTemplate")
+    safetyCheck:SetPoint("TOPLEFT", safetyHeader, "BOTTOMLEFT", 0, -2)
+    safetyCheck.Text:SetText("Lösch-Sicherung deaktivieren")
+    safetyCheck:SetChecked(false)
+    safetyCheck:SetScript("OnClick", function(self)
+        if not LunaWolves:IsOfficer() then
+            self:SetChecked(false)
+            LunaWolves:Print("Nur Officers können die Lösch-Sicherung umschalten.")
+            return
+        end
+        if self:GetChecked() then
+            LunaWolves.deleteSafetyDisabled = true
+            LunaWolves:Print("|cffff8800Lösch-Sicherung deaktiviert|r — reaktiviert sich in 60 Sekunden.")
+            -- 60-Sekunden-Reaktivierungs-Timer
+            if LunaWolves._safetyTimer then LunaWolves._safetyTimer:Cancel() end
+            LunaWolves._safetyTimer = C_Timer.NewTimer(60, function()
+                LunaWolves.deleteSafetyDisabled = false
+                if _G["LunaWolves_Opt_DeleteSafety"] then
+                    _G["LunaWolves_Opt_DeleteSafety"]:SetChecked(false)
+                end
+                LunaWolves:Print("|cff88ff88Lösch-Sicherung wieder aktiv.|r")
+            end)
+        else
+            LunaWolves.deleteSafetyDisabled = false
+            if LunaWolves._safetyTimer then
+                LunaWolves._safetyTimer:Cancel()
+                LunaWolves._safetyTimer = nil
+            end
+        end
+    end)
+
+    local safetyDesc = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    safetyDesc:SetPoint("TOPLEFT", safetyCheck, "BOTTOMLEFT", 26, -2)
+    safetyDesc:SetWidth(540)
+    safetyDesc:SetJustifyH("LEFT")
+    safetyDesc:SetText("|cff999999Erlaubt 'Spieler löschen' im DKP-Kontextmenü (Rechtsklick auf Namen).\nReaktiviert sich automatisch nach 60 Sekunden. Nur für Officers.|r")
+
     local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
     Settings.RegisterAddOnCategory(category)
 end
@@ -478,6 +573,9 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
         -- SavedVariables initialisieren
         LunaWolvesDB = LunaWolvesDB or {}
         LunaWolvesDB.officerRankThreshold = LunaWolvesDB.officerRankThreshold or 1
+
+        -- Runtime-Flags (nicht persistent)
+        LunaWolves.deleteSafetyDisabled = false
 
         -- Spielernamen cachen
         LunaWolves.playerName = UnitName("player")
@@ -510,7 +608,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.0.7 geladen. /lw für Hilfe.")
+        LunaWolves:Print("v1.0.8 geladen. /lw für Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()

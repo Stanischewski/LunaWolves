@@ -442,23 +442,7 @@ function DKP:HandleSlash(input)
             return
         end
         self._pendingDelete = nil
-        -- Spieler aus points entfernen
-        LunaWolvesDB.DKP.points[name] = nil
-        -- History-Einträge entfernen
-        local removed = 0
-        for i = #LunaWolvesDB.DKP.history, 1, -1 do
-            if LunaWolvesDB.DKP.history[i].player == name then
-                table.remove(LunaWolvesDB.DKP.history, i)
-                removed = removed + 1
-            end
-        end
-        LunaWolves:Print("|cff00ff00" .. name .. " gelöscht.|r (" .. removed .. " History-Einträge entfernt)")
-        -- Broadcast an andere Officers
-        LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name)
-        -- UI aktualisieren
-        if self.mainFrame and self.mainFrame:IsShown() then
-            self:RefreshList()
-        end
+        self:_PerformDelete(name)
 
     elseif cmd == "on" then
         if not LunaWolves:IsOfficer() then
@@ -1085,6 +1069,7 @@ end
 
 function DKP:ShowContextMenu(anchor, playerName)
     local isOfficer = LunaWolves:IsOfficer()
+    local safetyOff = LunaWolves.deleteSafetyDisabled == true
     MenuUtil.CreateContextMenu(anchor, function(ownerRegion, rootDescription)
         rootDescription:CreateTitle(playerName)
 
@@ -1104,6 +1089,22 @@ function DKP:ShowContextMenu(anchor, playerName)
         rootDescription:CreateButton("History anzeigen", function()
             DKP:HandleSlash("history " .. playerName)
         end)
+
+        -- Spieler löschen: Officer + Lösch-Sicherung muss in Optionen deaktiviert sein
+        local deleteLabel = "|cffff5555Spieler löschen|r"
+        if not safetyOff then
+            deleteLabel = "|cff666666Spieler löschen|r"  -- grau wenn gesperrt
+        end
+        local delBtn = rootDescription:CreateButton(deleteLabel, function()
+            -- Doppelt-Check zur Sicherheit
+            if not LunaWolves:IsOfficer() then return end
+            if not LunaWolves.deleteSafetyDisabled then
+                LunaWolves:Print("Lösch-Sicherung ist aktiv. ESC → Optionen → AddOns → LunaWolves.")
+                return
+            end
+            StaticPopup_Show("LUNAWOLVES_DKP_DELETE", playerName, nil, { name = playerName })
+        end)
+        delBtn:SetEnabled(isOfficer and safetyOff)
     end)
 end
 
@@ -1212,6 +1213,53 @@ function DKP:ShowInputDialog(playerName, action)
 
     d:Show()
 end
+
+-- ============================================================
+-- Spieler-Löschung (intern)
+-- ============================================================
+
+-- Eigentlicher Löschvorgang. Wird sowohl von /lw dkp confirmdelete als auch
+-- vom Kontextmenü-Bestätigungs-Popup aufgerufen.
+function DKP:_PerformDelete(name)
+    if not LunaWolves:IsOfficer() then return end
+    if not name or name == "" then return end
+
+    -- Spieler aus points entfernen
+    LunaWolvesDB.DKP.points[name] = nil
+    -- History-Einträge entfernen
+    local removed = 0
+    for i = #LunaWolvesDB.DKP.history, 1, -1 do
+        if LunaWolvesDB.DKP.history[i].player == name then
+            table.remove(LunaWolvesDB.DKP.history, i)
+            removed = removed + 1
+        end
+    end
+    LunaWolves:Print("|cff00ff00" .. name .. " gelöscht.|r (" .. removed .. " History-Einträge entfernt)")
+    -- Broadcast an andere Officers
+    LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name)
+    -- UI aktualisieren
+    if self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
+    end
+end
+
+-- Bestätigungs-Popup für Lösch-Aktion aus dem Kontextmenü.
+-- Voraussetzungen: Officer + Lösch-Sicherung im Optionspanel deaktiviert.
+StaticPopupDialogs["LUNAWOLVES_DKP_DELETE"] = {
+    text = "Spieler |cffff8888%s|r wirklich aus DKP löschen?\nAlle Punkte und History-Einträge werden entfernt.",
+    button1 = "Löschen",
+    button2 = "Abbrechen",
+    OnAccept = function(self, data)
+        if data and data.name then
+            DKP:_PerformDelete(data.name)
+        end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    showAlert = true,
+    preferredIndex = 3,  -- Verhindert Kollision mit Blizzard-Popups
+}
 
 -- ============================================================
 -- Modul registrieren

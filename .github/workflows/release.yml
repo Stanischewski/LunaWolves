@@ -38,7 +38,7 @@ jobs:
         run: |
           mkdir -p build/LunaWolves/Modules
           cp Core.lua LunaWolves.toc icon.tga pkgmeta.yaml build/LunaWolves/
-          cp Modules/DKP.lua Modules/RaidInvite.lua build/LunaWolves/Modules/
+          cp Modules/DKP.lua Modules/RaidInvite.lua Modules/Versions.lua build/LunaWolves/Modules/
           cd build
           zip -r ../LunaWolves.zip LunaWolves
           cd ..
