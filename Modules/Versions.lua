@@ -234,7 +234,7 @@ function VER:CreateListUI()
     local MAX_ROWS = 18
 
     local f = CreateFrame("Frame", "LunaWolves_VersionList", UIParent, "BackdropTemplate")
-    f:SetSize(540, ROW_HEIGHT * MAX_ROWS + 110)
+    f:SetSize(540, ROW_HEIGHT * MAX_ROWS + 130)
     f:SetPoint("CENTER")
     f:SetFrameStrata("HIGH")
     f:SetMovable(true)
@@ -253,17 +253,18 @@ function VER:CreateListUI()
     f:Hide()
     self.listFrame = f
 
-    -- Titel
+    -- Titel (gleicher Stil wie DKP-Fenster: "LunaWolves" blau, Modulname weiß)
     f.titleText = f:CreateFontString(nil, "OVERLAY")
     f.titleText:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
     f.titleText:SetPoint("TOP", f, "TOP", 0, -10)
-    f.titleText:SetText("|cff8888ffLunaWolves Versionsübersicht|r")
+    f.titleText:SetText("|cff8888ffLunaWolves|r Versionsübersicht")
 
     -- Schließen-Button (X)
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
-    -- Header
+    -- Header (gleicher Font/Position wie DKP-Fenster)
+    local headerY = -35
     local headers = {
         { "Spieler",    20  },
         { "Realm",      170 },
@@ -273,18 +274,25 @@ function VER:CreateListUI()
     }
     for _, h in ipairs(headers) do
         local fs = f:CreateFontString(nil, "OVERLAY")
-        fs:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
-        fs:SetPoint("TOPLEFT", f, "TOPLEFT", h[2], -38)
+        fs:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        fs:SetPoint("TOPLEFT", f, "TOPLEFT", h[2], headerY)
         fs:SetText(h[1])
         fs:SetTextColor(0.8, 0.8, 0.4)
     end
+
+    -- Trennlinie unter den Headern (wie beim DKP)
+    local headerSep = f:CreateTexture(nil, "ARTWORK")
+    headerSep:SetTexture(SOLID)
+    headerSep:SetVertexColor(0.4, 0.4, 0.6, 0.5)
+    headerSep:SetSize(510, 1)
+    headerSep:SetPoint("TOPLEFT", f, "TOPLEFT", 15, headerY - 15)
 
     -- Zeilen (Buttons, damit klickbar für Gruppen-Toggle)
     f.rows = {}
     for i = 1, MAX_ROWS do
         local row = CreateFrame("Button", nil, f)
         row:SetSize(510, ROW_HEIGHT)
-        row:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -52 - ((i - 1) * ROW_HEIGHT))
+        row:SetPoint("TOPLEFT", f, "TOPLEFT", 15, headerY - 20 - ((i - 1) * ROW_HEIGHT))
         row:RegisterForClicks("LeftButtonUp")
 
         local bg = row:CreateTexture(nil, "BACKGROUND")
@@ -318,44 +326,59 @@ function VER:CreateListUI()
         f.rows[i] = row
     end
 
-    -- "Mehr Einträge"-Hinweis unten (wenn Liste länger als MAX_ROWS)
+    -- ------------------------------------------------------------
+    -- Unterer Bereich (1:1 wie DKP-Fenster):
+    --   y=63: "Mehr Einträge"-Hinweis (nur bei Overflow)
+    --   y=38..60: Buttons (Höhe 22)
+    --   y=34:  Trennlinie zwischen Buttons und Status
+    --   y=13:  Info-/Status-Reihe auf voller Breite
+    -- ------------------------------------------------------------
+
+    -- "Mehr Einträge"-Hinweis (nur bei Overflow): zwischen Liste und Buttons
     f.moreText = f:CreateFontString(nil, "OVERLAY")
     f.moreText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
-    f.moreText:SetPoint("BOTTOM", f, "BOTTOM", 0, 42)
+    f.moreText:SetPoint("BOTTOM", f, "BOTTOM", 0, 63)
     f.moreText:SetTextColor(0.6, 0.6, 0.6)
     f.moreText:Hide()
 
-    -- Info-Zeile unten links: eigene Version + Sharing-Status
-    f.infoText = f:CreateFontString(nil, "OVERLAY")
-    f.infoText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
-    f.infoText:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 14)
-    f.infoText:SetTextColor(0.7, 0.7, 0.7)
-
-    -- Alle aus-/zuklappen
+    -- Buttons-Reihe (y=38, Höhe 22 — wie DKP)
     local toggleAllBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    toggleAllBtn:SetSize(130, 24)
-    toggleAllBtn:SetPoint("BOTTOM", f, "BOTTOM", -75, 12)
+    toggleAllBtn:SetSize(130, 22)
+    toggleAllBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 15, 38)
     toggleAllBtn:SetText("Alle ausklappen")
     f.toggleAllBtn = toggleAllBtn
     toggleAllBtn:SetScript("OnClick", function()
         VER:ToggleAll()
     end)
 
-    -- Refresh-Button
     local refreshBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    refreshBtn:SetSize(110, 24)
-    refreshBtn:SetPoint("BOTTOM", f, "BOTTOM", 75, 12)
+    refreshBtn:SetSize(110, 22)
+    refreshBtn:SetPoint("LEFT", toggleAllBtn, "RIGHT", 5, 0)
     refreshBtn:SetText("Aktualisieren")
     refreshBtn:SetScript("OnClick", function()
         LunaWolves:SendMessage("GUILD", "VER", "LISTREQ", "")
     end)
 
-    -- Schließen
     local closeBtn2 = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    closeBtn2:SetSize(110, 24)
-    closeBtn2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -20, 12)
+    closeBtn2:SetSize(110, 22)
+    closeBtn2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 38)
     closeBtn2:SetText("Schließen")
     closeBtn2:SetScript("OnClick", function() f:Hide() end)
+
+    -- Trennlinie ZWISCHEN Buttons und Info-Reihe (y=34, wie DKP)
+    local btnSep = f:CreateTexture(nil, "ARTWORK")
+    btnSep:SetTexture(SOLID)
+    btnSep:SetVertexColor(0.4, 0.4, 0.6, 0.4)
+    btnSep:SetSize(510, 1)
+    btnSep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 34)
+
+    -- Info-/Status-Reihe (y=13, volle Breite — wie DKP-Statuslabel)
+    f.infoText = f:CreateFontString(nil, "OVERLAY")
+    f.infoText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    f.infoText:SetPoint("BOTTOMLEFT",  f, "BOTTOMLEFT",  15, 13)
+    f.infoText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 13)
+    f.infoText:SetJustifyH("LEFT")
+    f.infoText:SetTextColor(1, 1, 1)
 
     table.insert(UISpecialFrames, "LunaWolves_VersionList")
 end
@@ -537,9 +560,10 @@ function VER:RefreshList()
             row.activityText:SetText(FormatActivity(e.lastSeen))
             row.activityText:SetTextColor(0.6, 0.6, 0.6)
 
-            -- Pfeil nur bei Gruppen-Leadern
+            -- Aus-/Einklapp-Indikator nur bei Gruppen-Leadern
+            -- (ASCII +/-, da FRIZQT__.TTF keine Unicode-Dreiecke rendert)
             if d.isGroupLeader then
-                row.arrow:SetText(d.isExpanded and "▼" or "▶")
+                row.arrow:SetText(d.isExpanded and "-" or "+")
             else
                 row.arrow:SetText("")
             end
