@@ -103,6 +103,7 @@ function VER:OnEnable()
     end
 
     self.versions = LunaWolvesDB.Versions
+    self.expandedTags = {}  -- [battleTag] = true wenn ausgeklappt (session-only)
 
     -- Alte Einträge aufräumen (älter als 30 Tage)
     self:PruneStale()
@@ -278,17 +279,26 @@ function VER:CreateListUI()
         fs:SetTextColor(0.8, 0.8, 0.4)
     end
 
-    -- Zeilen
+    -- Zeilen (Buttons, damit klickbar für Gruppen-Toggle)
     f.rows = {}
     for i = 1, MAX_ROWS do
-        local row = CreateFrame("Frame", nil, f)
+        local row = CreateFrame("Button", nil, f)
         row:SetSize(510, ROW_HEIGHT)
         row:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -52 - ((i - 1) * ROW_HEIGHT))
+        row:RegisterForClicks("LeftButtonUp")
 
         local bg = row:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints(row)
         bg:SetColorTexture(0.2, 0.2, 0.3, 0.2)
         row.bg = bg
+
+        -- Ausklapp-Pfeil (▶/▼) am linken Rand, nur sichtbar bei Gruppen-Leadern
+        row.arrow = row:CreateFontString(nil, "OVERLAY")
+        row.arrow:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        row.arrow:SetPoint("LEFT", row, "LEFT", 5, 0)
+        row.arrow:SetWidth(12)
+        row.arrow:SetJustifyH("CENTER")
+        row.arrow:SetTextColor(0.7, 0.7, 1)
 
         local function makeText(xOff, width)
             local fs = row:CreateFontString(nil, "OVERLAY")
@@ -298,7 +308,7 @@ function VER:CreateListUI()
             fs:SetJustifyH("LEFT")
             return fs
         end
-        row.nameText      = makeText(5,   140)
+        row.nameText      = makeText(20,  130)
         row.realmText     = makeText(150, 105)
         row.versionText   = makeText(260, 75)
         row.battleTagText = makeText(340, 120)
@@ -308,16 +318,33 @@ function VER:CreateListUI()
         f.rows[i] = row
     end
 
+    -- "Mehr Einträge"-Hinweis unten (wenn Liste länger als MAX_ROWS)
+    f.moreText = f:CreateFontString(nil, "OVERLAY")
+    f.moreText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    f.moreText:SetPoint("BOTTOM", f, "BOTTOM", 0, 42)
+    f.moreText:SetTextColor(0.6, 0.6, 0.6)
+    f.moreText:Hide()
+
     -- Info-Zeile unten links: eigene Version + Sharing-Status
     f.infoText = f:CreateFontString(nil, "OVERLAY")
     f.infoText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
     f.infoText:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 14)
     f.infoText:SetTextColor(0.7, 0.7, 0.7)
 
+    -- Alle aus-/zuklappen
+    local toggleAllBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    toggleAllBtn:SetSize(130, 24)
+    toggleAllBtn:SetPoint("BOTTOM", f, "BOTTOM", -75, 12)
+    toggleAllBtn:SetText("Alle ausklappen")
+    f.toggleAllBtn = toggleAllBtn
+    toggleAllBtn:SetScript("OnClick", function()
+        VER:ToggleAll()
+    end)
+
     -- Refresh-Button
     local refreshBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     refreshBtn:SetSize(110, 24)
-    refreshBtn:SetPoint("BOTTOM", f, "BOTTOM", 0, 12)
+    refreshBtn:SetPoint("BOTTOM", f, "BOTTOM", 75, 12)
     refreshBtn:SetText("Aktualisieren")
     refreshBtn:SetScript("OnClick", function()
         LunaWolves:SendMessage("GUILD", "VER", "LISTREQ", "")
@@ -353,74 +380,154 @@ local function FormatActivity(ts)
     return math.floor(diff / 86400) .. "d"
 end
 
+-- Eintrag aus self.versions in Anzeigeformat bringen
+local function MakeEntry(fullName, info)
+    return {
+        fullName  = fullName,
+        version   = info.version or "?",
+        battleTag = info.battleTag or "",
+        classFile = info.classFile or "UNKNOWN",
+        lastSeen  = info.lastSeen or 0,
+    }
+end
+
+-- Baut die Anzeigeliste auf:
+--  - Pro BattleTag mit >=2 Chars: ein "leader" (aktivster Char) + bei expanded[tag] alle weiteren als "sub"
+--  - Pro BattleTag mit 1 Char: einzelner Eintrag (kein Pfeil)
+--  - "(privat)"-Einträge ohne BattleTag: einzeln
+function VER:BuildDisplayList()
+    local groupedByTag = {}
+    local privates     = {}
+
+    for fullName, info in pairs(self.versions) do
+        local e = MakeEntry(fullName, info)
+        if e.battleTag ~= "" then
+            local g = groupedByTag[e.battleTag]
+            if not g then
+                g = { battleTag = e.battleTag, chars = {} }
+                groupedByTag[e.battleTag] = g
+            end
+            table.insert(g.chars, e)
+        else
+            table.insert(privates, e)
+        end
+    end
+
+    -- Gruppen vorbereiten: aktivster Char zuerst
+    local groupArr = {}
+    local groupCount = 0
+    for _, g in pairs(groupedByTag) do
+        groupCount = groupCount + 1
+        table.sort(g.chars, function(a, b) return a.lastSeen > b.lastSeen end)
+        g.latestActivity = g.chars[1].lastSeen
+        table.insert(groupArr, g)
+    end
+    -- Gruppen sortieren: aktivste zuerst
+    table.sort(groupArr, function(a, b) return a.latestActivity > b.latestActivity end)
+
+    -- Privat-Einträge nach Aktivität sortieren
+    table.sort(privates, function(a, b) return a.lastSeen > b.lastSeen end)
+
+    -- Flache Anzeige-Liste bauen
+    local display = {}
+
+    for _, g in ipairs(groupArr) do
+        local leader = g.chars[1]
+        local size = #g.chars
+        local isExpanded = self.expandedTags[g.battleTag] == true
+
+        -- Leader-Zeile mit Gruppen-Info
+        table.insert(display, {
+            entry        = leader,
+            isGroupLeader = size > 1,
+            groupSize    = size,
+            isExpanded   = isExpanded,
+            isSub        = false,
+            battleTag    = g.battleTag,
+        })
+
+        -- Sub-Zeilen wenn ausgeklappt
+        if isExpanded and size > 1 then
+            for i = 2, size do
+                table.insert(display, {
+                    entry      = g.chars[i],
+                    isSub      = true,
+                    battleTag  = g.battleTag,
+                })
+            end
+        end
+    end
+
+    for _, p in ipairs(privates) do
+        table.insert(display, { entry = p, isSub = false })
+    end
+
+    return display, groupCount, groupArr
+end
+
 function VER:RefreshList()
     local f = self.listFrame
     if not f then return end
 
     -- Höchste Version bestimmen (für Update-Markierung)
     local maxVersion = "0.0.0"
+    local totalEntries = 0
     for _, info in pairs(self.versions) do
+        totalEntries = totalEntries + 1
         if info.version and CompareVersions(info.version, maxVersion) > 0 then
             maxVersion = info.version
         end
     end
 
-    -- Liste in Array umwandeln und sortieren
-    -- Sortierung: BattleTag (für Gruppierung visuell) → Name
-    local list = {}
-    for fullName, info in pairs(self.versions) do
-        table.insert(list, {
-            fullName  = fullName,
-            version   = info.version or "?",
-            battleTag = info.battleTag or "",
-            classFile = info.classFile or "UNKNOWN",
-            lastSeen  = info.lastSeen or 0,
-        })
-    end
-    table.sort(list, function(a, b)
-        -- Einträge mit BattleTag zuerst gruppieren
-        local aHasTag = a.battleTag ~= ""
-        local bHasTag = b.battleTag ~= ""
-        if aHasTag ~= bHasTag then return aHasTag end
-        if a.battleTag ~= b.battleTag then return a.battleTag < b.battleTag end
-        return ShortName(a.fullName) < ShortName(b.fullName)
-    end)
+    local display, groupCount, groupArr = self:BuildDisplayList()
 
-    -- BattleTag-Häufigkeit zählen für Gruppen-Markierung
-    local tagCount = {}
-    for _, e in ipairs(list) do
-        if e.battleTag ~= "" then
-            tagCount[e.battleTag] = (tagCount[e.battleTag] or 0) + 1
+    -- "Alle aus/zuklappen"-Button-Label aktualisieren
+    if f.toggleAllBtn then
+        local anyExpanded = false
+        for _, g in ipairs(groupArr) do
+            if self.expandedTags[g.battleTag] then anyExpanded = true; break end
         end
+        f.toggleAllBtn:SetText(anyExpanded and "Alle zuklappen" or "Alle ausklappen")
+        f.toggleAllBtn:SetEnabled(groupCount > 0)
     end
 
     -- Zeilen befüllen
     for i, row in ipairs(f.rows) do
-        local e = list[i]
-        if e then
-            -- Name (Klassenfarbe)
+        local d = display[i]
+        if d then
+            local e = d.entry
+
+            -- Name (Klassenfarbe), Sub-Zeilen mit kleinem Einzug
+            local indent = d.isSub and "  └ " or ""
             local color = CLASS_COLORS[e.classFile]
             if color then
-                row.nameText:SetText(string.format("|cff%02x%02x%02x%s|r",
-                    color.r * 255, color.g * 255, color.b * 255, ShortName(e.fullName)))
+                row.nameText:SetText(string.format("%s|cff%02x%02x%02x%s|r",
+                    indent, color.r * 255, color.g * 255, color.b * 255, ShortName(e.fullName)))
             else
-                row.nameText:SetText(ShortName(e.fullName))
+                row.nameText:SetText(indent .. ShortName(e.fullName))
             end
 
             -- Realm
             row.realmText:SetText("|cff999999" .. RealmOf(e.fullName) .. "|r")
 
-            -- Version: aktuell = grün, älter = orange/rot
+            -- Version: aktuell = grün, älter = rot
             local cmp = CompareVersions(e.version, maxVersion)
             local versionColor = "|cff88ff88"
             if cmp < 0 then versionColor = "|cffff6666" end
             row.versionText:SetText(versionColor .. "v" .. e.version .. "|r")
 
-            -- BattleTag (mit Gruppen-Marker wenn mehrere Chars)
-            if e.battleTag ~= "" then
-                local count = tagCount[e.battleTag] or 1
-                local tagSuffix = count > 1 and (" |cffaaaaff(" .. count .. ")|r") or ""
-                row.battleTagText:SetText(e.battleTag .. tagSuffix)
+            -- BattleTag-Spalte
+            if d.isGroupLeader then
+                -- Gruppen-Leader: BattleTag + "(N Chars)"
+                row.battleTagText:SetText(e.battleTag .. " |cffaaaaff(" .. d.groupSize .. " Chars)|r")
+                row.battleTagText:SetTextColor(0.7, 0.8, 1)
+            elseif d.isSub then
+                -- Sub-Zeilen: BattleTag dezent
+                row.battleTagText:SetText("|cff555577" .. d.battleTag .. "|r")
+                row.battleTagText:SetTextColor(0.5, 0.5, 0.6)
+            elseif e.battleTag ~= "" then
+                -- Einzel-Char mit BattleTag
+                row.battleTagText:SetText(e.battleTag)
                 row.battleTagText:SetTextColor(0.7, 0.8, 1)
             else
                 row.battleTagText:SetText("|cff666666(privat)|r")
@@ -430,17 +537,46 @@ function VER:RefreshList()
             row.activityText:SetText(FormatActivity(e.lastSeen))
             row.activityText:SetTextColor(0.6, 0.6, 0.6)
 
-            -- Alternierende Hintergründe für Gruppen
-            if e.battleTag ~= "" and (tagCount[e.battleTag] or 0) > 1 then
-                row.bg:SetColorTexture(0.25, 0.3, 0.4, 0.3)
+            -- Pfeil nur bei Gruppen-Leadern
+            if d.isGroupLeader then
+                row.arrow:SetText(d.isExpanded and "▼" or "▶")
+            else
+                row.arrow:SetText("")
+            end
+
+            -- Hintergrund
+            if d.isGroupLeader then
+                row.bg:SetColorTexture(0.25, 0.3, 0.45, 0.4)
+            elseif d.isSub then
+                row.bg:SetColorTexture(0.18, 0.2, 0.32, 0.5)
             else
                 row.bg:SetColorTexture(0.2, 0.2, 0.3, 0.2)
+            end
+
+            -- Klick-Verhalten: nur Leader togglen Gruppe
+            row:SetScript("OnClick", nil)
+            if d.isGroupLeader then
+                local tag = d.battleTag
+                row:SetScript("OnClick", function()
+                    self.expandedTags[tag] = not self.expandedTags[tag]
+                    self:RefreshList()
+                end)
             end
 
             row:Show()
         else
             row:Hide()
+            row:SetScript("OnClick", nil)
         end
+    end
+
+    -- "Mehr Einträge" Hinweis wenn Liste länger als MAX_ROWS
+    local maxRows = #f.rows
+    if #display > maxRows then
+        f.moreText:SetText("|cff888888… und " .. (#display - maxRows) .. " weitere Einträge (zuklappen oder Fenster größer machen)|r")
+        f.moreText:Show()
+    else
+        f.moreText:Hide()
     end
 
     -- Info-Zeile
@@ -448,9 +584,28 @@ function VER:RefreshList()
     local myVer = me and me.version or "?"
     local shareStatus = LunaWolvesDB.shareBattleTag and "|cff88ff88geteilt|r" or "|cffff8800privat|r"
     f.infoText:SetText("Eigene Version: |cff88ff88v" .. myVer ..
-        "|r  •  Höchste Version: |cffffaa00v" .. maxVersion ..
+        "|r  •  Höchste: |cffffaa00v" .. maxVersion ..
         "|r  •  BattleTag: " .. shareStatus ..
-        "  •  " .. #list .. " Spieler bekannt")
+        "  •  " .. totalEntries .. " Chars / " .. groupCount .. " Personen")
+end
+
+-- Alle Gruppen aus-/zuklappen (Toggle: wenn irgendeine offen ist → alle zu, sonst alle auf)
+function VER:ToggleAll()
+    local _, _, groupArr = self:BuildDisplayList()
+    local anyExpanded = false
+    for _, g in ipairs(groupArr) do
+        if self.expandedTags[g.battleTag] then anyExpanded = true; break end
+    end
+    if anyExpanded then
+        wipe(self.expandedTags)
+    else
+        for _, g in ipairs(groupArr) do
+            if #g.chars > 1 then
+                self.expandedTags[g.battleTag] = true
+            end
+        end
+    end
+    self:RefreshList()
 end
 
 -- ============================================================
