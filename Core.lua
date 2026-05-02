@@ -140,7 +140,8 @@ local function OnAddonMessage(prefix, message, channel, sender)
 
     local mod = LunaWolves.modules[moduleName]
     if mod and mod.OnMessage then
-        mod:OnMessage(command, payload or "", senderShort, channel)
+        -- 5. Argument: ungekürzter Sender (Name-Realm) für Cross-Realm-Whisper-Antworten
+        mod:OnMessage(command, payload or "", senderShort, channel, sender)
     end
 end
 
@@ -188,7 +189,7 @@ function LunaWolves:HandleChunk(message, sender, channel)
         local moduleName, command, payload = strsplit(":", full, 3)
         local mod = self.modules[moduleName]
         if mod and mod.OnMessage then
-            mod:OnMessage(command, payload or "", senderShort, channel)
+            mod:OnMessage(command, payload or "", senderShort, channel, sender)
         end
     end
 end
@@ -301,6 +302,7 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw dkp off -- DKP-Session beenden")
         LunaWolves:Print("/lw dkp status -- Session-Status anzeigen")
         LunaWolves:Print("/lw dkp sync -- Sync erzwingen")
+        LunaWolves:Print("/lw dkp reset -- Season-Reset (alle Punkte auf 0)")
         LunaWolves:Print("/lw raid -- Gruppen-Suche öffnen")
         LunaWolves:Print("/lw raid create [Titel] -- Gruppe erstellen (Dialog oder direkt)")
         LunaWolves:Print("/lw raid close -- Eigene Gruppe schließen")
@@ -608,7 +610,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.1.0 geladen. /lw für Hilfe.")
+        LunaWolves:Print("v1.1.1 geladen. /lw für Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()

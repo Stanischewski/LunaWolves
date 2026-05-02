@@ -40,6 +40,13 @@ function DKP:OnEnable()
     LunaWolvesDB.DKP.history = LunaWolvesDB.DKP.history or {}
     LunaWolvesDB.DKP.pointsPerKill = LunaWolvesDB.DKP.pointsPerKill or 10
     LunaWolvesDB.DKP.lastSyncTimestamp = LunaWolvesDB.DKP.lastSyncTimestamp or 0
+    -- Tombstones für gelöschte Spieler (verhindern Re-Sync von Daten gelöschter Spieler)
+    LunaWolvesDB.DKP.deleted = LunaWolvesDB.DKP.deleted or {}
+    -- Archiv für Season-Resets (nur lokal, nicht synchronisiert)
+    LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
+
+    -- Tombstones älter als 90 Tage aufräumen
+    self:PruneTombstones()
 
     -- Session-Zustand (nicht in SavedVariables -- wird nicht gespeichert)
     self.sessionActive  = false
@@ -92,6 +99,32 @@ local function GenerateEntryId(officer)
     return officer .. "-" .. time() .. "-" .. math.random(1000, 9999)
 end
 
+-- Tombstone-Helpers: Spieler-Lösch-Marker mit 90-Tage-Verfall
+local TOMBSTONE_TTL = 90 * 24 * 60 * 60  -- 90 Tage in Sekunden
+
+function DKP:PruneTombstones()
+    local now = time()
+    local kept = {}
+    for _, t in ipairs(LunaWolvesDB.DKP.deleted or {}) do
+        if t.timestamp and (now - t.timestamp) <= TOMBSTONE_TTL then
+            table.insert(kept, t)
+        end
+    end
+    LunaWolvesDB.DKP.deleted = kept
+end
+
+-- Gibt true zurück wenn ein Tombstone für diesen Spieler existiert,
+-- der NEUER ist als der gegebene Eintrags-Zeitstempel.
+function DKP:IsDeletedAfter(player, timestamp)
+    timestamp = timestamp or time()
+    for _, t in ipairs(LunaWolvesDB.DKP.deleted or {}) do
+        if t.player == player and t.timestamp and t.timestamp >= timestamp then
+            return true
+        end
+    end
+    return false
+end
+
 -- Punkte vergeben
 function DKP:Award(player, amount, reason, entryType, officer, entryId, timestamp)
     if not LunaWolves:IsOfficer() and not entryId then
@@ -106,6 +139,13 @@ function DKP:Award(player, amount, reason, entryType, officer, entryId, timestam
     entryId = entryId or GenerateEntryId(officer)
     timestamp = timestamp or time()
     entryType = entryType or "MANUAL"
+
+    -- Tombstone-Check: Wenn der Spieler nach diesem Eintrag gelöscht wurde,
+    -- darf der Eintrag NICHT mehr eingespielt werden (verhindert Re-Sync von
+    -- gelöschten Spielern).
+    if self:IsDeletedAfter(player, timestamp) then
+        return false
+    end
 
     -- Duplikat prüfen
     for _, entry in ipairs(LunaWolvesDB.DKP.history) do
@@ -187,7 +227,8 @@ function DKP:OnEncounterEnd(encounterID, encounterName, difficultyID, groupSize,
     if not self:ShouldAutoAward() then return end
 
     local pointsPerKill = LunaWolvesDB.DKP.pointsPerKill or 10
-    local awarded = 0
+    local reason = "Bosskill: " .. (encounterName or "Unbekannt")
+    local batchEntries = {}
 
     for i = 1, GetNumGroupMembers() do
         local name = select(1, GetRaidRosterInfo(i))
@@ -195,21 +236,37 @@ function DKP:OnEncounterEnd(encounterID, encounterName, difficultyID, groupSize,
             local shortName = strsplit("-", name)
             -- Nur Gildenmitglieder erhalten Auto-DKP
             if LunaWolves.guildRanks[shortName] ~= nil then
-                local ok, entryId, ts = self:Award(shortName, pointsPerKill,
-                    "Bosskill: " .. (encounterName or "Unbekannt"), "BOSS")
+                local ok, entryId, ts = self:Award(shortName, pointsPerKill, reason, "BOSS")
                 if ok then
-                    -- Broadcast an Gilde
-                    self:BroadcastUpdate(entryId, shortName, pointsPerKill,
-                        "Bosskill: " .. (encounterName or "Unbekannt"), "BOSS", ts)
-                    awarded = awarded + 1
+                    table.insert(batchEntries, table.concat({
+                        entryId, shortName, tostring(pointsPerKill), reason, "BOSS",
+                        LunaWolves.playerName, tostring(ts)
+                    }, ";"))
                 end
             end
         end
     end
 
-    if awarded > 0 then
-        LunaWolves:Print(awarded .. " Spieler haben " .. pointsPerKill ..
+    if #batchEntries > 0 then
+        -- Statt N einzelner UPDATEs eine einzige BATCH-Nachricht --
+        -- reduziert Send-Queue-Druck dramatisch (bei 20 Spielern: 1 statt 20 Messages)
+        local payload = table.concat(batchEntries, "|")
+        LunaWolves:SendMessage("GUILD", "DKP", "BATCH", payload)
+        if IsInRaid() then
+            LunaWolves:SendMessage("RAID", "DKP", "BATCH", payload)
+        end
+
+        LunaWolves:Print(#batchEntries .. " Spieler haben " .. pointsPerKill ..
             " DKP für " .. (encounterName or "Bosskill") .. " erhalten.")
+
+        -- Sicherheitsnetz: 5s nach Encounter ein SYNCREQ via RAID, damit
+        -- Empfänger die das BATCH verpasst haben sich nachsynchronisieren.
+        C_Timer.After(5, function()
+            if IsInRaid() then
+                local sinceTs = LunaWolvesDB.DKP.lastSyncTimestamp or 0
+                LunaWolves:SendMessage("RAID", "DKP", "SYNCREQ", tostring(sinceTs))
+            end
+        end)
     end
 end
 
@@ -264,16 +321,24 @@ function DKP:RequestSync()
     LunaWolves:SendMessage("GUILD", "DKP", "SYNCREQ", tostring(lastTs))
 end
 
--- Eingehende Nachrichten verarbeiten
-function DKP:OnMessage(command, payload, sender, channel)
+-- Eingehende Nachrichten verarbeiten.
+-- senderFull ist der ungekürzte Sender-Name (Name-Realm), den wir für
+-- Cross-Realm-Whisper-Antworten brauchen.
+function DKP:OnMessage(command, payload, sender, channel, senderFull)
     if command == "UPDATE" then
         self:HandleUpdate(payload, sender)
+    elseif command == "BATCH" then
+        self:HandleBatch(payload, sender)
     elseif command == "SYNCREQ" then
-        self:HandleSyncRequest(payload, sender)
+        self:HandleSyncRequest(payload, sender, senderFull)
     elseif command == "SYNCRESP" then
         self:HandleSyncResponse(payload, sender)
+    elseif command == "TOMBSTONES" then
+        self:HandleTombstones(payload, sender)
     elseif command == "DELETE" then
         self:HandleDelete(payload, sender)
+    elseif command == "RESET" then
+        self:HandleReset(payload, sender)
     elseif command == "SESSION" then
         self:HandleSession(payload, sender)
     end
@@ -294,12 +359,40 @@ function DKP:HandleUpdate(payload, sender)
     end
 end
 
-function DKP:HandleSyncRequest(payload, sender)
+-- Mehrere Awards in einer Nachricht (verwendet bei OnEncounterEnd).
+-- Reduziert die Anzahl Addon-Messages bei Bosskills von N auf 1.
+function DKP:HandleBatch(payload, sender)
+    if not LunaWolves:IsOfficer(sender) then return end
+    if not payload or payload == "" then return end
+
+    local entries = { strsplit("|", payload) }
+    local added = 0
+    for _, entryStr in ipairs(entries) do
+        local id, player, delta, reason, entryType, officer, ts = strsplit(";", entryStr)
+        delta = tonumber(delta) or 0
+        ts = tonumber(ts) or time()
+        local ok = self:Award(player, delta, reason, entryType, officer, id, ts)
+        if ok then
+            added = added + 1
+            if ts > (LunaWolvesDB.DKP.lastSyncTimestamp or 0) then
+                LunaWolvesDB.DKP.lastSyncTimestamp = ts
+            end
+        end
+    end
+
+    if added > 0 and self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
+    end
+end
+
+function DKP:HandleSyncRequest(payload, sender, senderFull)
     -- Nur Officers antworten
     if not LunaWolves:IsOfficer() then return end
 
-    -- Nur der alphabetisch erste online Officer antwortet (vermeidet Mehrfach-Antworten)
-    -- Vereinfacht: Wir antworten immer, der Empfänger dedupliziert
+    -- Whisper-Ziel: senderFull (Name-Realm) ist Cross-Realm-tauglich,
+    -- Fallback auf Kurzname für Same-Realm
+    local target = senderFull or sender
+
     local sinceTs = tonumber(payload) or 0
     local entries = {}
 
@@ -314,8 +407,17 @@ function DKP:HandleSyncRequest(payload, sender)
     end
 
     if #entries > 0 then
-        local payload = table.concat(entries, "|")
-        LunaWolves:SendMessage("WHISPER", "DKP", "SYNCRESP", payload, sender)
+        local respPayload = table.concat(entries, "|")
+        LunaWolves:SendMessage("WHISPER", "DKP", "SYNCRESP", respPayload, target)
+    end
+
+    -- Tombstones immer mitschicken (verhindert Wiederbeleben gelöschter Spieler)
+    if #LunaWolvesDB.DKP.deleted > 0 then
+        local tombs = {}
+        for _, t in ipairs(LunaWolvesDB.DKP.deleted) do
+            table.insert(tombs, t.player .. "," .. t.timestamp .. "," .. (t.officer or ""))
+        end
+        LunaWolves:SendMessage("WHISPER", "DKP", "TOMBSTONES", table.concat(tombs, "|"), target)
     end
 end
 
@@ -443,6 +545,39 @@ function DKP:HandleSlash(input)
         end
         self._pendingDelete = nil
         self:_PerformDelete(name)
+
+    elseif cmd == "reset" then
+        -- Season-Reset: setzt alle DKP zurück und archiviert die History lokal
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers können einen Season-Reset auslösen.")
+            return
+        end
+        local pCount, hCount = 0, #LunaWolvesDB.DKP.history
+        for _ in pairs(LunaWolvesDB.DKP.points) do pCount = pCount + 1 end
+        LunaWolves:Print("|cffff4444Season-Reset:|r Alle DKP (current + lifetime) werden auf 0 gesetzt.")
+        LunaWolves:Print("Aktuelle Daten: " .. pCount .. " Spieler, " .. hCount .. " History-Einträge.")
+        LunaWolves:Print("Die History wird lokal archiviert (nicht mehr synchronisiert).")
+        LunaWolves:Print("Bestätigen mit: /lw dkp confirmreset [Saison-Name]")
+        self._pendingReset = time()
+        C_Timer.After(60, function()
+            if self._pendingReset and (time() - self._pendingReset) > 59 then
+                self._pendingReset = nil
+                LunaWolves:Print("|cff999999Season-Reset abgelaufen.|r")
+            end
+        end)
+
+    elseif cmd == "confirmreset" then
+        if not LunaWolves:IsOfficer() then
+            LunaWolves:Print("Nur Officers können einen Season-Reset auslösen.")
+            return
+        end
+        if not self._pendingReset or (time() - self._pendingReset) > 60 then
+            LunaWolves:Print("Kein ausstehender Reset. Zuerst: /lw dkp reset")
+            return
+        end
+        self._pendingReset = nil
+        local seasonName = (rest and rest ~= "") and rest or ("Saison-" .. date("%Y-%m-%d-%H%M"))
+        self:_PerformReset(seasonName)
 
     elseif cmd == "on" then
         if not LunaWolves:IsOfficer() then
@@ -858,8 +993,11 @@ function DKP:HandleDelete(payload, sender)
     -- Sender muss Officer sein
     if not LunaWolves:IsOfficer(sender) then return end
 
-    local name = payload
+    -- Neues Format: name;timestamp;officer (alt: nur name -- backward compatible)
+    local name, ts, officer = strsplit(";", payload)
     if not name or name == "" then return end
+    ts = tonumber(ts) or time()
+    officer = officer or sender
 
     -- Spieler lokal entfernen
     LunaWolvesDB.DKP.points[name] = nil
@@ -869,10 +1007,54 @@ function DKP:HandleDelete(payload, sender)
         end
     end
 
+    -- Tombstone hinzufügen wenn noch nicht vorhanden (Schutz vor Re-Sync)
+    local exists = false
+    for _, t in ipairs(LunaWolvesDB.DKP.deleted) do
+        if t.player == name and t.timestamp == ts then exists = true; break end
+    end
+    if not exists then
+        table.insert(LunaWolvesDB.DKP.deleted, { player = name, timestamp = ts, officer = officer })
+    end
+
     LunaWolves:Print(name .. " wurde von " .. sender .. " aus der DKP-Liste entfernt.")
 
     -- UI aktualisieren
     if self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
+    end
+end
+
+-- Tombstones zwischen Officers synchronisieren (beim Login-Sync)
+function DKP:HandleTombstones(payload, sender)
+    if not LunaWolves:IsOfficer(sender) then return end
+    if not payload or payload == "" then return end
+
+    local entries = { strsplit("|", payload) }
+    local applied = 0
+    for _, e in ipairs(entries) do
+        local player, ts, officer = strsplit(",", e)
+        ts = tonumber(ts) or 0
+        if player and player ~= "" and ts > 0 then
+            -- Bereits vorhanden?
+            local exists = false
+            for _, t in ipairs(LunaWolvesDB.DKP.deleted) do
+                if t.player == player and t.timestamp == ts then exists = true; break end
+            end
+            if not exists then
+                table.insert(LunaWolvesDB.DKP.deleted, { player = player, timestamp = ts, officer = officer })
+                applied = applied + 1
+                -- Spieler lokal löschen falls noch in DB
+                LunaWolvesDB.DKP.points[player] = nil
+                for i = #LunaWolvesDB.DKP.history, 1, -1 do
+                    local entry = LunaWolvesDB.DKP.history[i]
+                    if entry.player == player and (entry.timestamp or 0) <= ts then
+                        table.remove(LunaWolvesDB.DKP.history, i)
+                    end
+                end
+            end
+        end
+    end
+    if applied > 0 and self.mainFrame and self.mainFrame:IsShown() then
         self:RefreshList()
     end
 end
@@ -1220,9 +1402,13 @@ end
 
 -- Eigentlicher Löschvorgang. Wird sowohl von /lw dkp confirmdelete als auch
 -- vom Kontextmenü-Bestätigungs-Popup aufgerufen.
+-- Erzeugt einen Tombstone (verhindert Re-Sync) und broadcastet ihn.
 function DKP:_PerformDelete(name)
     if not LunaWolves:IsOfficer() then return end
     if not name or name == "" then return end
+
+    local now = time()
+    local officer = LunaWolves.playerName
 
     -- Spieler aus points entfernen
     LunaWolvesDB.DKP.points[name] = nil
@@ -1234,10 +1420,79 @@ function DKP:_PerformDelete(name)
             removed = removed + 1
         end
     end
+
+    -- Tombstone erzeugen (90-Tage-Schutz vor Re-Sync alter Daten)
+    table.insert(LunaWolvesDB.DKP.deleted, {
+        player    = name,
+        timestamp = now,
+        officer   = officer,
+    })
+
     LunaWolves:Print("|cff00ff00" .. name .. " gelöscht.|r (" .. removed .. " History-Einträge entfernt)")
-    -- Broadcast an andere Officers
-    LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name)
+    -- Broadcast an andere Officers (neues Format: name;timestamp;officer)
+    LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name .. ";" .. now .. ";" .. officer)
     -- UI aktualisieren
+    if self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
+    end
+end
+
+-- ============================================================
+-- Season-Reset (intern)
+-- ============================================================
+
+-- Setzt alle DKP-Daten zurück und archiviert sie lokal. Das Archiv ist
+-- NICHT Teil des normalen Sync, also nur auf dem ausführenden Officer
+-- sichtbar (kann später per Slash-Befehl exportiert/eingesehen werden).
+function DKP:_PerformReset(seasonName)
+    if not LunaWolves:IsOfficer() then return end
+    seasonName = seasonName or ("Saison-" .. date("%Y-%m-%d-%H%M"))
+
+    -- Aktuellen Stand lokal archivieren
+    LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
+    LunaWolvesDB.DKP.archive[seasonName] = {
+        points     = LunaWolvesDB.DKP.points,
+        history    = LunaWolvesDB.DKP.history,
+        archivedAt = time(),
+        archivedBy = LunaWolves.playerName,
+    }
+
+    -- Reset: alles auf null. Tombstones bleiben (90-Tage-Schutz weiterläuft).
+    LunaWolvesDB.DKP.points = {}
+    LunaWolvesDB.DKP.history = {}
+    LunaWolvesDB.DKP.lastSyncTimestamp = 0
+
+    LunaWolves:Print("|cff00ff00Season-Reset durchgeführt.|r Archiv: " .. seasonName)
+
+    -- Broadcast an andere Officers, damit sie auch resetten
+    LunaWolves:SendMessage("GUILD", "DKP", "RESET", seasonName .. ";" .. time())
+
+    if self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
+    end
+end
+
+-- Empfängerseite: Reset-Broadcast eines anderen Officers anwenden
+function DKP:HandleReset(payload, sender)
+    if not LunaWolves:IsOfficer(sender) then return end
+    local seasonName, ts = strsplit(";", payload)
+    seasonName = (seasonName and seasonName ~= "") and seasonName or ("Saison-" .. date("%Y-%m-%d-%H%M"))
+
+    -- Lokal archivieren (eigene Sicht der Pre-Reset-Daten)
+    LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
+    LunaWolvesDB.DKP.archive[seasonName] = {
+        points     = LunaWolvesDB.DKP.points,
+        history    = LunaWolvesDB.DKP.history,
+        archivedAt = tonumber(ts) or time(),
+        archivedBy = sender,
+    }
+
+    LunaWolvesDB.DKP.points = {}
+    LunaWolvesDB.DKP.history = {}
+    LunaWolvesDB.DKP.lastSyncTimestamp = 0
+
+    LunaWolves:Print("|cff00ff00Season-Reset von " .. sender .. ":|r " .. seasonName)
+
     if self.mainFrame and self.mainFrame:IsShown() then
         self:RefreshList()
     end

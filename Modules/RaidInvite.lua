@@ -446,7 +446,7 @@ function RAID:CreateListUI()
     local MAX_ROWS = 10
 
     local f = CreateFrame("Frame", "LunaWolves_GroupList", UIParent, "BackdropTemplate")
-    f:SetSize(460, ROW_HEIGHT * MAX_ROWS + 110)
+    f:SetSize(540, ROW_HEIGHT * MAX_ROWS + 130)
     f:SetPoint("CENTER")
     f:SetFrameStrata("HIGH")
     f:SetMovable(true)
@@ -458,47 +458,45 @@ function RAID:CreateListUI()
     f:Hide()
     self.listFrame = f
 
-    -- Titel
+    -- Titel: "LunaWolves" blau, Modulname weiß (DKP-Stil)
     f.titleText = f:CreateFontString(nil, "OVERLAY")
     f.titleText:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
     f.titleText:SetPoint("TOP", f, "TOP", 0, -10)
-    f.titleText:SetText("|cff8888ffGilden-Gruppensuche|r")
+    f.titleText:SetText("|cff8888ffLunaWolves|r Gruppen-Suche")
 
     -- Schließen
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
-    -- Header
-    local h1 = f:CreateFontString(nil, "OVERLAY")
-    h1:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
-    h1:SetPoint("TOPLEFT", f, "TOPLEFT", 20, -38)
-    h1:SetText("Ersteller")
-    h1:SetTextColor(0.8, 0.8, 0.4)
+    -- Header (11pt OUTLINE wie DKP)
+    local headerY = -35
+    local headers = {
+        { "Ersteller", 20  },
+        { "Typ",       170 },
+        { "Titel",     230 },
+        { "Slots",     385 },
+    }
+    for _, h in ipairs(headers) do
+        local fs = f:CreateFontString(nil, "OVERLAY")
+        fs:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        fs:SetPoint("TOPLEFT", f, "TOPLEFT", h[2], headerY)
+        fs:SetText(h[1])
+        fs:SetTextColor(0.8, 0.8, 0.4)
+    end
 
-    local h2 = f:CreateFontString(nil, "OVERLAY")
-    h2:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
-    h2:SetPoint("TOPLEFT", f, "TOPLEFT", 140, -38)
-    h2:SetText("Typ")
-    h2:SetTextColor(0.8, 0.8, 0.4)
-
-    local h3 = f:CreateFontString(nil, "OVERLAY")
-    h3:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
-    h3:SetPoint("TOPLEFT", f, "TOPLEFT", 195, -38)
-    h3:SetText("Titel")
-    h3:SetTextColor(0.8, 0.8, 0.4)
-
-    local h4 = f:CreateFontString(nil, "OVERLAY")
-    h4:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
-    h4:SetPoint("TOPLEFT", f, "TOPLEFT", 310, -38)
-    h4:SetText("Slots")
-    h4:SetTextColor(0.8, 0.8, 0.4)
+    -- Trennlinie unter den Headern
+    local headerSep = f:CreateTexture(nil, "ARTWORK")
+    headerSep:SetTexture(SOLID)
+    headerSep:SetVertexColor(0.4, 0.4, 0.6, 0.5)
+    headerSep:SetSize(510, 1)
+    headerSep:SetPoint("TOPLEFT", f, "TOPLEFT", 15, headerY - 15)
 
     -- Zeilen
     f.rows = {}
     for i = 1, MAX_ROWS do
         local row = CreateFrame("Frame", nil, f)
-        row:SetSize(420, ROW_HEIGHT)
-        row:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -52 - ((i - 1) * ROW_HEIGHT))
+        row:SetSize(510, ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", f, "TOPLEFT", 15, headerY - 20 - ((i - 1) * ROW_HEIGHT))
 
         local bg = row:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints(row)
@@ -508,31 +506,31 @@ function RAID:CreateListUI()
         row.creatorText = row:CreateFontString(nil, "OVERLAY")
         row.creatorText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
         row.creatorText:SetPoint("LEFT", row, "LEFT", 5, 0)
-        row.creatorText:SetWidth(120)
+        row.creatorText:SetWidth(140)
         row.creatorText:SetJustifyH("LEFT")
 
         row.typeText = row:CreateFontString(nil, "OVERLAY")
         row.typeText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
-        row.typeText:SetPoint("LEFT", row, "LEFT", 125, 0)
-        row.typeText:SetWidth(55)
+        row.typeText:SetPoint("LEFT", row, "LEFT", 155, 0)
+        row.typeText:SetWidth(60)
         row.typeText:SetJustifyH("LEFT")
 
         row.titleText = row:CreateFontString(nil, "OVERLAY")
         row.titleText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
-        row.titleText:SetPoint("LEFT", row, "LEFT", 180, 0)
-        row.titleText:SetWidth(115)
+        row.titleText:SetPoint("LEFT", row, "LEFT", 215, 0)
+        row.titleText:SetWidth(155)
         row.titleText:SetJustifyH("LEFT")
 
         row.slotsText = row:CreateFontString(nil, "OVERLAY")
         row.slotsText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
-        row.slotsText:SetPoint("LEFT", row, "LEFT", 295, 0)
+        row.slotsText:SetPoint("LEFT", row, "LEFT", 370, 0)
         row.slotsText:SetWidth(55)
         row.slotsText:SetJustifyH("LEFT")
         row.slotsText:SetTextColor(0.7, 0.7, 0.7)
 
         -- Aktions-Button
         local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        btn:SetSize(75, 22)
+        btn:SetSize(80, 22)
         btn:SetPoint("RIGHT", row, "RIGHT", -3, 0)
         row.actionBtn = btn
 
@@ -540,30 +538,51 @@ function RAID:CreateListUI()
         f.rows[i] = row
     end
 
-    -- Unten: Buttons
+    -- ------------------------------------------------------------
+    -- Unterer Bereich (DKP-Stil):
+    --   y=38: Buttons (Höhe 22)
+    --   y=34: Trennlinie
+    --   y=13: Info-Reihe weiß auf voller Breite
+    -- ------------------------------------------------------------
+
     local createBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    createBtn:SetSize(140, 26)
-    createBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 12)
+    createBtn:SetSize(140, 22)
+    createBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 15, 38)
     createBtn:SetText("Neue Gruppe")
     createBtn:SetScript("OnClick", function()
         RAID:ShowCreateDialog()
     end)
 
     local refreshBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    refreshBtn:SetSize(110, 26)
-    refreshBtn:SetPoint("BOTTOM", f, "BOTTOM", 0, 12)
+    refreshBtn:SetSize(110, 22)
+    refreshBtn:SetPoint("LEFT", createBtn, "RIGHT", 5, 0)
     refreshBtn:SetText("Aktualisieren")
     refreshBtn:SetScript("OnClick", function()
         LunaWolves:SendMessage("GUILD", "RAID", "LISTREQ", "")
     end)
 
     local closeBtn2 = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    closeBtn2:SetSize(110, 26)
-    closeBtn2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -20, 12)
+    closeBtn2:SetSize(110, 22)
+    closeBtn2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 38)
     closeBtn2:SetText("Schließen")
     closeBtn2:SetScript("OnClick", function()
         f:Hide()
     end)
+
+    -- Trennlinie zwischen Buttons und Info-Reihe
+    local btnSep = f:CreateTexture(nil, "ARTWORK")
+    btnSep:SetTexture(SOLID)
+    btnSep:SetVertexColor(0.4, 0.4, 0.6, 0.4)
+    btnSep:SetSize(510, 1)
+    btnSep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 34)
+
+    -- Info-Reihe (weiß, volle Breite, wird in RefreshList befüllt)
+    f.infoText = f:CreateFontString(nil, "OVERLAY")
+    f.infoText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    f.infoText:SetPoint("BOTTOMLEFT",  f, "BOTTOMLEFT",  15, 13)
+    f.infoText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 13)
+    f.infoText:SetJustifyH("LEFT")
+    f.infoText:SetTextColor(1, 1, 1)
 
     -- Auto-Refresh via OnUpdate (throttled)
     f.refreshTimer = 0
@@ -659,7 +678,7 @@ function RAID:RefreshList()
         end
     end
 
-    -- Leer-Hinweis
+    -- Leer-Hinweis (zentriert in Liste)
     if #list == 0 then
         if not f.emptyText then
             f.emptyText = f:CreateFontString(nil, "OVERLAY")
@@ -671,6 +690,23 @@ function RAID:RefreshList()
         f.emptyText:Show()
     elseif f.emptyText then
         f.emptyText:Hide()
+    end
+
+    -- Info-Reihe: Status-Übersicht
+    if f.infoText then
+        local raidCount = 0
+        local partyCount = 0
+        for _, g in pairs(self.activeGroups) do
+            if g.type == "RAID" then raidCount = raidCount + 1 else partyCount = partyCount + 1 end
+        end
+        local myStatus = "|cff999999keine eigene Gruppe|r"
+        if self.myGroupId and self.activeGroups[self.myGroupId] then
+            local g = self.activeGroups[self.myGroupId]
+            myStatus = "|cff88ff88aktiv:|r " .. g.title ..
+                (g.autoAccept and " |cff88ff88(Auto)|r" or "")
+        end
+        f.infoText:SetText(#list .. " Gruppen aktiv (" .. partyCount .. " 5er, " ..
+            raidCount .. " Raid)  •  Eigene: " .. myStatus)
     end
 end
 

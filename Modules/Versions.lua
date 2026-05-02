@@ -264,13 +264,14 @@ function VER:CreateListUI()
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
     -- Header (gleicher Font/Position wie DKP-Fenster)
+    -- Realm steht jetzt grau hinter dem Namen (wie DKP), BattleTag wird intern
+    -- für Gruppierung verwendet aber nicht mehr angezeigt.
     local headerY = -35
     local headers = {
         { "Spieler",    20  },
-        { "Realm",      170 },
-        { "Version",    280 },
-        { "BattleTag",  360 },
-        { "Aktivität",  475 },
+        { "Version",    290 },
+        { "Chars",      380 },
+        { "Aktivität",  450 },
     }
     for _, h in ipairs(headers) do
         local fs = f:CreateFontString(nil, "OVERLAY")
@@ -316,11 +317,10 @@ function VER:CreateListUI()
             fs:SetJustifyH("LEFT")
             return fs
         end
-        row.nameText      = makeText(20,  130)
-        row.realmText     = makeText(150, 105)
-        row.versionText   = makeText(260, 75)
-        row.battleTagText = makeText(340, 120)
-        row.activityText  = makeText(455, 60)
+        row.nameText     = makeText(20,  260)  -- Char + Realm-Suffix in einem
+        row.versionText  = makeText(275, 80)
+        row.charsText    = makeText(365, 60)
+        row.activityText = makeText(430, 60)
 
         row:Hide()
         f.rows[i] = row
@@ -520,18 +520,21 @@ function VER:RefreshList()
         if d then
             local e = d.entry
 
-            -- Name (Klassenfarbe), Sub-Zeilen mit kleinem Einzug
+            -- Name + Realm-Suffix grau hintendran (wie DKP), Sub-Zeilen mit Einzug
             local indent = d.isSub and "  └ " or ""
+            local myRealm = RealmOf(GetFullName())
+            local charRealm = RealmOf(e.fullName)
+            local realmSuffix = (charRealm ~= "" and charRealm ~= myRealm)
+                and ("|cff777777-" .. charRealm .. "|r") or ""
             local color = CLASS_COLORS[e.classFile]
+            local nameStr
             if color then
-                row.nameText:SetText(string.format("%s|cff%02x%02x%02x%s|r",
-                    indent, color.r * 255, color.g * 255, color.b * 255, ShortName(e.fullName)))
+                nameStr = string.format("|cff%02x%02x%02x%s|r",
+                    color.r * 255, color.g * 255, color.b * 255, ShortName(e.fullName))
             else
-                row.nameText:SetText(indent .. ShortName(e.fullName))
+                nameStr = ShortName(e.fullName)
             end
-
-            -- Realm
-            row.realmText:SetText("|cff999999" .. RealmOf(e.fullName) .. "|r")
+            row.nameText:SetText(indent .. nameStr .. realmSuffix)
 
             -- Version: aktuell = grün, älter = rot
             local cmp = CompareVersions(e.version, maxVersion)
@@ -539,21 +542,11 @@ function VER:RefreshList()
             if cmp < 0 then versionColor = "|cffff6666" end
             row.versionText:SetText(versionColor .. "v" .. e.version .. "|r")
 
-            -- BattleTag-Spalte
+            -- Chars-Spalte: nur bei Gruppen-Leadern Anzahl, sonst leer
             if d.isGroupLeader then
-                -- Gruppen-Leader: BattleTag + "(N Chars)"
-                row.battleTagText:SetText(e.battleTag .. " |cffaaaaff(" .. d.groupSize .. " Chars)|r")
-                row.battleTagText:SetTextColor(0.7, 0.8, 1)
-            elseif d.isSub then
-                -- Sub-Zeilen: BattleTag dezent
-                row.battleTagText:SetText("|cff555577" .. d.battleTag .. "|r")
-                row.battleTagText:SetTextColor(0.5, 0.5, 0.6)
-            elseif e.battleTag ~= "" then
-                -- Einzel-Char mit BattleTag
-                row.battleTagText:SetText(e.battleTag)
-                row.battleTagText:SetTextColor(0.7, 0.8, 1)
+                row.charsText:SetText("|cffaaaaff" .. d.groupSize .. "|r")
             else
-                row.battleTagText:SetText("|cff666666(privat)|r")
+                row.charsText:SetText("")
             end
 
             -- Aktivität
