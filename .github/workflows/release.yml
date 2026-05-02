@@ -44,17 +44,44 @@ jobs:
           cd ..
           unzip -l LunaWolves.zip
 
+      - name: Release-Notes aus Tag-/Commit-Body bauen
+        id: notes
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # Bei annotated Tags den Tag-Body nehmen, sonst den Commit-Body.
+          TAG_TYPE=$(git cat-file -t "$TAG" 2>/dev/null || echo "commit")
+          if [ "$TAG_TYPE" = "tag" ]; then
+            NOTES=$(git tag -l --format='%(contents:body)' "$TAG")
+            # Falls Tag-Body leer (z.B. nur Signatur), Commit-Body nehmen
+            if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+              NOTES=$(git log -1 --format=%b "$TAG")
+            fi
+          else
+            # Lightweight Tag: Commit-Body verwenden
+            NOTES=$(git log -1 --format=%b "$TAG")
+          fi
+          # Wenn Body leer, Fallback auf Subject
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            NOTES=$(git log -1 --format=%s "$TAG")
+          fi
+          # In Datei schreiben (handhabt Mehrzeiler ohne Shell-Escaping)
+          printf '%s\n' "$NOTES" > release-notes.md
+          echo "--- Release-Notes für $TAG: ---"
+          cat release-notes.md
+          echo "--- Ende ---"
+
       - name: Release erstellen oder aktualisieren
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG existiert bereits – Asset wird ersetzt."
+            echo "Release $TAG existiert bereits – Asset und Notes werden aktualisiert."
             gh release upload "$TAG" LunaWolves.zip --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
           else
             echo "Release $TAG wird erstellt."
             gh release create "$TAG" LunaWolves.zip \
               --title "$TAG" \
-              --generate-notes
+              --notes-file release-notes.md
           fi
