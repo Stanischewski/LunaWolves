@@ -29,6 +29,41 @@ function LunaWolves:Print(...)
     DEFAULT_CHAT_FRAME:AddMessage("|cff8888ff[LunaWolves]|r " .. msg)
 end
 
+-- ============================================================
+-- Debug-Modus für Addon-Messages
+-- ============================================================
+-- Zeigt ein- und ausgehende Addon-Nachrichten im Chat. Wird über
+-- /lw debug umgeschaltet. Persistent in LunaWolvesDB.debug.
+-- Nützlich um Sync-Probleme zu diagnostizieren (z.B. ob Nachrichten
+-- in Instanzen ankommen, ob Officer-Check greift, etc.).
+
+local function TruncatePayload(payload, max)
+    payload = payload or ""
+    max = max or 80
+    if #payload > max then return payload:sub(1, max - 3) .. "..." end
+    return payload
+end
+
+function LunaWolves:DebugSend(msg, channel, target)
+    if not (LunaWolvesDB and LunaWolvesDB.debug and LunaWolvesDB.debug.send) then return end
+    local moduleName, command, payload = strsplit(":", msg or "", 3)
+    local chanStr = channel or "?"
+    if target and target ~= "" then chanStr = chanStr .. "->" .. target end
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cffaaaaaa[LW]|r |cff88ff88OUT|r |cff999999%-15s|r |cffffff00%s:%s|r %s",
+        chanStr, moduleName or "?", command or "?", TruncatePayload(payload)
+    ))
+end
+
+function LunaWolves:DebugRecv(message, channel, sender)
+    if not (LunaWolvesDB and LunaWolvesDB.debug and LunaWolvesDB.debug.recv) then return end
+    local moduleName, command, payload = strsplit(":", message or "", 3)
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cffaaaaaa[LW]|r |cff88ccffIN |r |cff999999%-9s %-15s|r |cffffff00%s:%s|r %s",
+        channel or "?", sender or "?", moduleName or "?", command or "?", TruncatePayload(payload)
+    ))
+end
+
 -- Kurze Spielernamen ohne Realm (für lokalen Server)
 local function StripRealm(name)
     if not name then return nil end
@@ -109,6 +144,7 @@ function LunaWolves:ProcessSendQueue()
         return
     end
     local item = table.remove(SEND_QUEUE, 1)
+    self:DebugSend(item.msg, item.channel, item.target)
     C_ChatInfo.SendAddonMessage(ADDON_PREFIX, item.msg, item.channel, item.target)
     SEND_TIMER = C_Timer.After(0.1, function()
         LunaWolves:ProcessSendQueue()
@@ -118,6 +154,9 @@ end
 -- Eingehende Nachrichten verarbeiten
 local function OnAddonMessage(prefix, message, channel, sender)
     if prefix ~= ADDON_PREFIX then return end
+
+    -- Debug VOR dem Self-Filter, damit man auch eigene Echo-Nachrichten sieht
+    LunaWolves:DebugRecv(message, channel, sender)
 
     -- Eigene Nachrichten ignorieren
     local senderShort = StripRealm(sender)
@@ -288,6 +327,32 @@ SlashCmdList["LUNAWOLVES"] = function(input)
             LunaWolves:Print("Ändern: /lw officer <rang>")
             LunaWolves:Print("Nutze /lw ranks um alle Gildenränge zu sehen.")
         end
+    elseif cmd == "debug" then
+        -- Debug-Modus für Addon-Messages umschalten
+        LunaWolvesDB.debug = LunaWolvesDB.debug or { send = false, recv = false }
+        local sub = (rest or ""):lower():match("^(%S*)")
+        if sub == "send" then
+            LunaWolvesDB.debug.send = not LunaWolvesDB.debug.send
+        elseif sub == "recv" then
+            LunaWolvesDB.debug.recv = not LunaWolvesDB.debug.recv
+        elseif sub == "off" or sub == "aus" then
+            LunaWolvesDB.debug.send = false
+            LunaWolvesDB.debug.recv = false
+        elseif sub == "on" or sub == "all" then
+            LunaWolvesDB.debug.send = true
+            LunaWolvesDB.debug.recv = true
+        else
+            -- Toggle: wenn etwas an ist -> alles aus, sonst -> alles an
+            local anyOn = LunaWolvesDB.debug.send or LunaWolvesDB.debug.recv
+            LunaWolvesDB.debug.send = not anyOn
+            LunaWolvesDB.debug.recv = not anyOn
+        end
+        LunaWolves:Print("Debug: SEND=" .. (LunaWolvesDB.debug.send and "|cff88ff88an|r" or "|cff999999aus|r") ..
+            "  RECV=" .. (LunaWolvesDB.debug.recv and "|cff88ff88an|r" or "|cff999999aus|r"))
+        if not (LunaWolvesDB.debug.send or LunaWolvesDB.debug.recv) then
+            LunaWolves:Print("|cff999999Tipp: /lw debug send|recv|on|off zum gezielten Schalten.|r")
+        end
+
     elseif cmd == "ranks" then
         -- Alle Gildenränge mit Namen auflisten
         if not IsInGuild() then
@@ -326,6 +391,8 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw versions share -- BattleTag-Sharing umschalten")
         LunaWolves:Print("/lw ranks -- Gildenränge anzeigen")
         LunaWolves:Print("/lw officer <rang> -- Officer-Rang-Schwelle setzen")
+        LunaWolves:Print("/lw debug -- Addon-Messages mitloggen (toggle)")
+        LunaWolves:Print("/lw debug send|recv|on|off -- gezielt schalten")
     end
 end
 
@@ -625,7 +692,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.1.2 geladen. /lw für Hilfe.")
+        LunaWolves:Print("v1.1.3 geladen. /lw für Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()
