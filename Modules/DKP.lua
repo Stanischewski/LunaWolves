@@ -53,6 +53,9 @@ function DKP:OnEnable()
     self.sessionMapID   = nil
     self.sessionMapName = nil
 
+    -- Aus-/Einklapp-Status pro Person (Session-only, nicht persistiert)
+    self.expandedKeys = {}
+
     -- WoW-Events registrieren
     self.eventFrame = CreateFrame("Frame")
     self.eventFrame:RegisterEvent("ENCOUNTER_END")
@@ -252,19 +255,23 @@ function DKP:OnEncounterEnd(encounterID, encounterName, difficultyID, groupSize,
         -- reduziert Send-Queue-Druck dramatisch (bei 20 Spielern: 1 statt 20 Messages)
         local payload = table.concat(batchEntries, "|")
         LunaWolves:SendMessage("GUILD", "DKP", "BATCH", payload)
-        if IsInRaid() then
-            LunaWolves:SendMessage("RAID", "DKP", "BATCH", payload)
+        -- Plus direkter Raid-/Instance-Channel: in Instanzen MUSS INSTANCE_CHAT
+        -- verwendet werden, sonst verwirft Blizzard die Nachricht (häufige Falle!)
+        local groupChan = LunaWolves:GetGroupChannel()
+        if groupChan then
+            LunaWolves:SendMessage(groupChan, "DKP", "BATCH", payload)
         end
 
         LunaWolves:Print(#batchEntries .. " Spieler haben " .. pointsPerKill ..
             " DKP für " .. (encounterName or "Bosskill") .. " erhalten.")
 
-        -- Sicherheitsnetz: 5s nach Encounter ein SYNCREQ via RAID, damit
+        -- Sicherheitsnetz: 5s nach Encounter ein SYNCREQ via Gruppen-Channel, damit
         -- Empfänger die das BATCH verpasst haben sich nachsynchronisieren.
         C_Timer.After(5, function()
-            if IsInRaid() then
+            local chan = LunaWolves:GetGroupChannel()
+            if chan then
                 local sinceTs = LunaWolvesDB.DKP.lastSyncTimestamp or 0
-                LunaWolves:SendMessage("RAID", "DKP", "SYNCREQ", tostring(sinceTs))
+                LunaWolves:SendMessage(chan, "DKP", "SYNCREQ", tostring(sinceTs))
             end
         end)
     end
@@ -306,12 +313,12 @@ function DKP:BroadcastUpdate(entryId, player, delta, reason, entryType, timestam
     }, ";")
     -- Immer an Gilde (für Offline-Sync und Nicht-Raid-Officers)
     LunaWolves:SendMessage("GUILD", "DKP", "UPDATE", payload)
-    -- Im Raid/Gruppe zusaetzlich direkt senden -- sorgt für sofortige Aktualisierung
-    -- auch bei Cross-Realm-Gruppen wo GUILD-Nachrichten verzögert ankommen können
-    if IsInRaid() then
-        LunaWolves:SendMessage("RAID", "DKP", "UPDATE", payload)
-    elseif IsInGroup() then
-        LunaWolves:SendMessage("PARTY", "DKP", "UPDATE", payload)
+    -- Im Raid/Gruppe zusätzlich direkt senden -- sorgt für sofortige Aktualisierung
+    -- auch bei Cross-Realm-Gruppen wo GUILD-Nachrichten verzögert ankommen können.
+    -- WICHTIG: GetGroupChannel() liefert INSTANCE_CHAT in Instanzen, RAID/PARTY draußen.
+    local groupChan = LunaWolves:GetGroupChannel()
+    if groupChan then
+        LunaWolves:SendMessage(groupChan, "DKP", "UPDATE", payload)
     end
 end
 
@@ -696,11 +703,19 @@ function DKP:CreateUI()
         row:SetScript("OnEnter", function() highlight:Show() end)
         row:SetScript("OnLeave", function() highlight:Hide() end)
 
+        -- Aus-/Einklapp-Pfeil (nur bei Personen mit mehreren Chars sichtbar)
+        row.arrow = row:CreateFontString(nil, "OVERLAY")
+        row.arrow:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+        row.arrow:SetPoint("LEFT", row, "LEFT", 5, 0)
+        row.arrow:SetWidth(12)
+        row.arrow:SetJustifyH("CENTER")
+        row.arrow:SetTextColor(0.7, 0.7, 1)
+
         -- Text-Felder
         row.nameText = row:CreateFontString(nil, "OVERLAY")
         row.nameText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
-        row.nameText:SetPoint("LEFT", row, "LEFT", 5, 0)
-        row.nameText:SetWidth(150)
+        row.nameText:SetPoint("LEFT", row, "LEFT", 20, 0)
+        row.nameText:SetWidth(140)
         row.nameText:SetJustifyH("LEFT")
 
         row.classText = row:CreateFontString(nil, "OVERLAY")
@@ -810,64 +825,226 @@ function DKP:ToggleUI()
 end
 
 -- Sortierte Spielerliste aufbauen
-function DKP:GetSortedPlayers()
-    local players = {}
-    for name, pts in pairs(LunaWolvesDB.DKP.points) do
-        table.insert(players, {
-            name = name,
-            current = pts.current,
-            lifetime = pts.lifetime,
-        })
+-- Char-Name -> ownerKey: BattleTag wenn vorhanden, sonst Char-Name als Fallback.
+-- Datenmodell bleibt char-basiert -- die Gruppierung passiert nur bei Anzeige.
+function DKP:ResolveOwnerKey(charName)
+    local ver = LunaWolves:GetModule("VER")
+    if not ver or not ver.versions then return charName end
+    for fullName, info in pairs(ver.versions) do
+        local short = strsplit("-", fullName)
+        if short == charName and info.battleTag and info.battleTag ~= "" then
+            return info.battleTag
+        end
     end
-    -- Absteigend nach aktuellen DKP sortieren
-    table.sort(players, function(a, b) return a.current > b.current end)
-    return players
+    return charName
+end
+
+-- Versions-DB-Lookup: ergänzende Char-Infos (lastSeen, classFile, realm)
+function DKP:GetCharVersionInfo(charName)
+    local ver = LunaWolves:GetModule("VER")
+    if not ver or not ver.versions then return nil end
+    for fullName, info in pairs(ver.versions) do
+        if strsplit("-", fullName) == charName then
+            local _, realm = strsplit("-", fullName, 2)
+            return {
+                classFile = info.classFile,
+                realm     = realm,
+                lastSeen  = info.lastSeen or 0,
+            }
+        end
+    end
+    return nil
+end
+
+-- Display-Liste mit Gruppierung pro Person aufbauen.
+-- Pro ownerKey (= BattleTag oder Char-Fallback) wird ein "Leader"-Eintrag erzeugt.
+-- Bei mehreren Chars unter einem BattleTag: Sub-Zeilen wenn ausgeklappt.
+function DKP:BuildDisplayList()
+    local groups = {}
+
+    for charName, pts in pairs(LunaWolvesDB.DKP.points) do
+        local ownerKey = self:ResolveOwnerKey(charName)
+        if not groups[ownerKey] then
+            groups[ownerKey] = {
+                ownerKey    = ownerKey,
+                isBattleTag = ownerKey ~= charName,
+                sumCurrent  = 0,
+                sumLifetime = 0,
+                chars       = {},
+            }
+        end
+        local g = groups[ownerKey]
+        g.sumCurrent  = g.sumCurrent + (pts.current or 0)
+        g.sumLifetime = g.sumLifetime + (pts.lifetime or 0)
+
+        -- Klassen-/Realm-Info aus Gildenroster + Versions-DB zusammenführen
+        local classFile, realm = self:GetPlayerInfo(charName)
+        local verInfo = self:GetCharVersionInfo(charName)
+        if verInfo then
+            classFile = classFile or verInfo.classFile
+            realm     = realm or verInfo.realm
+        end
+
+        table.insert(g.chars, {
+            name      = charName,
+            current   = pts.current or 0,
+            lifetime  = pts.lifetime or 0,
+            classFile = classFile,
+            realm     = realm,
+            lastSeen  = verInfo and verInfo.lastSeen or 0,
+        })
+
+        -- Wenn der ownerKey gleich einem charName ist, müssen wir auch das
+        -- BattleTag-Flag korrigieren: nur wenn ownerKey != charName
+        if ownerKey ~= charName then g.isBattleTag = true end
+    end
+
+    -- Innerhalb jeder Gruppe: Chars nach Aktivität sortieren (aktuell aktiv = displayChar)
+    for _, g in pairs(groups) do
+        table.sort(g.chars, function(a, b)
+            if a.lastSeen ~= b.lastSeen then return a.lastSeen > b.lastSeen end
+            return a.current > b.current
+        end)
+    end
+
+    -- Gruppen nach Gesamt-DKP sortieren (höchster Pool zuerst)
+    local groupArr = {}
+    for _, g in pairs(groups) do table.insert(groupArr, g) end
+    table.sort(groupArr, function(a, b) return a.sumCurrent > b.sumCurrent end)
+
+    -- Flache Display-Liste mit Leader/Sub
+    local display = {}
+    for _, g in ipairs(groupArr) do
+        local hasMulti   = #g.chars > 1
+        local isExpanded = self.expandedKeys[g.ownerKey] == true
+        local leaderChar = g.chars[1]
+
+        table.insert(display, {
+            isLeader   = true,
+            isMulti    = hasMulti,
+            isExpanded = isExpanded,
+            ownerKey   = g.ownerKey,
+            leaderChar = leaderChar,
+            sumCurrent = g.sumCurrent,
+            sumLifetime= g.sumLifetime,
+            charCount  = #g.chars,
+        })
+
+        if hasMulti and isExpanded then
+            for i = 2, #g.chars do
+                table.insert(display, {
+                    isSub    = true,
+                    ownerKey = g.ownerKey,
+                    char     = g.chars[i],
+                })
+            end
+        end
+    end
+
+    return display
 end
 
 function DKP:RefreshList()
-    local players = self:GetSortedPlayers()
-    local numPlayers = #players
+    local display = self:BuildDisplayList()
+    local numItems = #display
 
-    FauxScrollFrame_Update(self.scrollFrame, numPlayers, VISIBLE_ROWS, ROW_HEIGHT)
+    FauxScrollFrame_Update(self.scrollFrame, numItems, VISIBLE_ROWS, ROW_HEIGHT)
     local offset = FauxScrollFrame_GetOffset(self.scrollFrame)
 
     for i = 1, VISIBLE_ROWS do
         local row = self.rows[i]
         local idx = i + offset
 
-        if idx <= numPlayers then
-            local p = players[idx]
-            row.playerData = p
+        if idx <= numItems then
+            local d = display[idx]
 
-            row.dkpText:SetText(tostring(p.current))
-            row.lifetimeText:SetText(tostring(p.lifetime))
+            if d.isLeader then
+                local lc = d.leaderChar
+                row.playerData = { name = lc.name, ownerKey = d.ownerKey }
 
-            -- Klasse und Realm aus Gildenroster holen
-            local classFile, realm = self:GetPlayerInfo(p.name)
+                -- Pfeil nur bei Multi-Char-Personen
+                if d.isMulti then
+                    row.arrow:SetText(d.isExpanded and "-" or "+")
+                else
+                    row.arrow:SetText("")
+                end
 
-            -- Name: Realm grau dahinter wenn Cross-Realm
-            if realm and realm ~= "" then
-                row.nameText:SetText(p.name .. "|cff777777-" .. realm .. "|r")
+                -- Name + Realm-Suffix grau, Char-Count bei Multi
+                local realmStr = (lc.realm and lc.realm ~= "")
+                    and ("|cff777777-" .. lc.realm .. "|r") or ""
+                local countStr = d.isMulti and (" |cffaaaaff(" .. d.charCount .. ")|r") or ""
+                row.nameText:SetText(lc.name .. realmStr .. countStr)
+
+                -- Klassenfarbe (vom displayChar)
+                if lc.classFile and CLASS_COLORS[lc.classFile] then
+                    local c = CLASS_COLORS[lc.classFile]
+                    row.nameText:SetTextColor(c.r, c.g, c.b)
+                    row.classText:SetText(lc.classFile)
+                    row.classText:SetTextColor(c.r, c.g, c.b)
+                else
+                    row.nameText:SetTextColor(1, 1, 1)
+                    row.classText:SetText("-")
+                    row.classText:SetTextColor(0.5, 0.5, 0.5)
+                end
+
+                -- Pool-Sum
+                row.dkpText:SetText(tostring(d.sumCurrent))
+                row.dkpText:SetTextColor(0.2, 1, 0.2)
+                row.lifetimeText:SetText(tostring(d.sumLifetime))
+                row.lifetimeText:SetTextColor(0.7, 0.7, 0.7)
+
+                -- Klick: Linksklick auf Multi-Char-Leader togglt Gruppe;
+                -- Rechtsklick öffnet immer Kontextmenü (für displayChar)
+                local ownerKey = d.ownerKey
+                local isMulti = d.isMulti
+                row:SetScript("OnClick", function(self, button)
+                    if button == "RightButton" and row.playerData then
+                        DKP:ShowContextMenu(row, row.playerData.name)
+                    elseif button == "LeftButton" and isMulti then
+                        DKP.expandedKeys[ownerKey] = not DKP.expandedKeys[ownerKey]
+                        DKP:RefreshList()
+                    end
+                end)
             else
-                row.nameText:SetText(p.name)
-            end
+                -- Sub-Zeile (einzelner Char einer Multi-Char-Person)
+                local c = d.char
+                row.playerData = { name = c.name, ownerKey = d.ownerKey }
+                row.arrow:SetText("")
 
-            -- Klassenfarbe
-            if classFile and CLASS_COLORS[classFile] then
-                local c = CLASS_COLORS[classFile]
-                row.nameText:SetTextColor(c.r, c.g, c.b)
-                row.classText:SetText(classFile)
-                row.classText:SetTextColor(c.r, c.g, c.b)
-            else
-                row.nameText:SetTextColor(1, 1, 1)
-                row.classText:SetText("-")
-                row.classText:SetTextColor(0.5, 0.5, 0.5)
+                local realmStr = (c.realm and c.realm ~= "")
+                    and ("|cff777777-" .. c.realm .. "|r") or ""
+                row.nameText:SetText("  └ " .. c.name .. realmStr)
+
+                if c.classFile and CLASS_COLORS[c.classFile] then
+                    local cc = CLASS_COLORS[c.classFile]
+                    row.nameText:SetTextColor(cc.r * 0.75, cc.g * 0.75, cc.b * 0.75)
+                    row.classText:SetText(c.classFile)
+                    row.classText:SetTextColor(cc.r * 0.75, cc.g * 0.75, cc.b * 0.75)
+                else
+                    row.nameText:SetTextColor(0.6, 0.6, 0.6)
+                    row.classText:SetText("-")
+                    row.classText:SetTextColor(0.4, 0.4, 0.4)
+                end
+
+                -- Sub-Werte etwas dezenter dargestellt
+                row.dkpText:SetText(tostring(c.current))
+                row.dkpText:SetTextColor(0.4, 0.7, 0.4)
+                row.lifetimeText:SetText(tostring(c.lifetime))
+                row.lifetimeText:SetTextColor(0.5, 0.5, 0.5)
+
+                -- Sub-Zeile: nur Rechtsklick-Kontext, kein Toggle
+                row:SetScript("OnClick", function(self, button)
+                    if button == "RightButton" and row.playerData then
+                        DKP:ShowContextMenu(row, row.playerData.name)
+                    end
+                end)
             end
 
             row:Show()
         else
             row.playerData = nil
             row:Hide()
+            row:SetScript("OnClick", nil)
         end
     end
 end
@@ -908,10 +1085,13 @@ function DKP:ActivateSession()
     LunaWolves:Print("|cff00ff00DKP-Session gestartet:|r " .. mapName)
     LunaWolves:Print("Bosskills vergeben jetzt automatisch DKP. Beenden mit: /lw dkp off")
 
-    -- An alle Officers in Gilde und Raid syncen
+    -- An alle Officers in Gilde und Raid/Instanz syncen
     local payload = "on;" .. mapName .. ";" .. tostring(mapID)
     LunaWolves:SendMessage("GUILD", "DKP", "SESSION", payload)
-    LunaWolves:SendMessage("RAID",  "DKP", "SESSION", payload)
+    local groupChan = LunaWolves:GetGroupChannel()
+    if groupChan then
+        LunaWolves:SendMessage(groupChan, "DKP", "SESSION", payload)
+    end
 
     self:UpdateSessionStatus()
 end
@@ -931,8 +1111,9 @@ function DKP:DeactivateSession(silent)
     if not silent then
         LunaWolves:Print("|cffff8800DKP-Session beendet.|r Bosskills zählen nicht mehr.")
         LunaWolves:SendMessage("GUILD", "DKP", "SESSION", "off")
-        if IsInRaid() then
-            LunaWolves:SendMessage("RAID", "DKP", "SESSION", "off")
+        local groupChan = LunaWolves:GetGroupChannel()
+        if groupChan then
+            LunaWolves:SendMessage(groupChan, "DKP", "SESSION", "off")
         end
     end
 

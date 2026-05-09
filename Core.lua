@@ -209,6 +209,21 @@ end
 -- 4. Berechtigungssystem
 -- ============================================================
 
+-- Liefert den korrekten Channel für Gruppen-/Raidnachrichten.
+-- WICHTIG: Innerhalb von Cross-Realm-Instanzen (LFG, LFR, premade dungeons/raids)
+-- ist "RAID"/"PARTY" ungültig -- "INSTANCE_CHAT" muss verwendet werden, sonst
+-- werden Nachrichten von Blizzard verworfen.
+function LunaWolves:GetGroupChannel()
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        return "INSTANCE_CHAT"
+    elseif IsInRaid() then
+        return "RAID"
+    elseif IsInGroup() then
+        return "PARTY"
+    end
+    return nil
+end
+
 function LunaWolves:IsOfficer(playerName)
     if not playerName then playerName = self.playerName end
     local rank = self.guildRanks[playerName]
@@ -610,7 +625,7 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.1.1 geladen. /lw für Hilfe.")
+        LunaWolves:Print("v1.1.2 geladen. /lw für Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()
