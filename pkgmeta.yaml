@@ -3,6 +3,6 @@ package-as: LunaWolves
 ignore:
   - README.md
   - LICENSE
-  - Install-LunaWolves.bat
   - .git
   - .gitignore
+  - .github
