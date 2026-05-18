@@ -109,12 +109,19 @@ function Roster:DoScan()
             if isOnline then lastSeen = now end
             lastSeen = lastSeen or now
 
-            -- Item-Level: nur fuer den eigenen Charakter direkt verfuegbar
+            -- Item-Level: fuer eigenen Char direkt, fuer andere aus Versions-Daten
             local ilvl = entry.itemLevel
             if charName == playerName and charRealm == playerRealm then
                 local _, equipped = GetAverageItemLevel()
                 if equipped and equipped > 0 then
                     ilvl = math.floor(equipped)
+                end
+            else
+                -- Versions-Modul broadcasted ilvl von Addon-Nutzern
+                local vKey = charName .. "-" .. charRealm
+                local verEntry = LunaWolvesDB.Versions and LunaWolvesDB.Versions[vKey]
+                if verEntry and (verEntry.itemLevel or 0) > 0 then
+                    ilvl = verEntry.itemLevel
                 end
             end
 

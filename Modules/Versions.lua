@@ -60,6 +60,15 @@ local function GetMyVersion()
     return "?"
 end
 
+-- Eigenes equipped Item-Level
+local function GetMyIlvl()
+    local _, equipped = GetAverageItemLevel()
+    if equipped and equipped > 0 then
+        return math.floor(equipped)
+    end
+    return 0
+end
+
 -- Eigenen Battle.net-Tag (sofern Sharing aktiv ist und BN verbunden)
 local function GetMyBattleTag()
     if not LunaWolvesDB or LunaWolvesDB.shareBattleTag == false then
@@ -130,6 +139,7 @@ function VER:UpdateSelf()
         battleTag  = GetMyBattleTag(),
         classFile  = classFile or "UNKNOWN",
         lastSeen   = time(),
+        itemLevel  = GetMyIlvl(),
     }
 end
 
@@ -145,7 +155,7 @@ function VER:OnMessage(command, payload, sender, channel)
     end
 end
 
--- HELLO senden: version;battleTag;classFile;fullName
+-- HELLO senden: version;battleTag;classFile;fullName;ilvl
 function VER:BroadcastHello()
     self:UpdateSelf()
     local me = self.versions[GetFullName()]
@@ -155,12 +165,13 @@ function VER:BroadcastHello()
         me.battleTag or "",
         me.classFile or "UNKNOWN",
         GetFullName(),
+        tostring(me.itemLevel or 0),
     }, ";")
     LunaWolves:SendMessage("GUILD", "VER", "HELLO", payload)
 end
 
 function VER:HandleHello(payload, sender)
-    local version, battleTag, classFile, fullName = strsplit(";", payload)
+    local version, battleTag, classFile, fullName, ilvlStr = strsplit(";", payload)
     if not version or not fullName then return end
 
     -- Sender muss zum fullName passen (Anti-Spoof light)
@@ -174,6 +185,7 @@ function VER:HandleHello(payload, sender)
         battleTag  = battleTag or "",
         classFile  = (classFile and classFile ~= "") and classFile or "UNKNOWN",
         lastSeen   = time(),
+        itemLevel  = tonumber(ilvlStr) or 0,
     }
 
     -- UI live aktualisieren wenn offen
