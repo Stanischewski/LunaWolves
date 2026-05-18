@@ -353,6 +353,11 @@ SlashCmdList["LUNAWOLVES"] = function(input)
             LunaWolves:Print("|cff999999Tipp: /lw debug send|recv|on|off zum gezielten Schalten.|r")
         end
 
+    elseif cmd == "roster" then
+        local mod = LunaWolves:GetModule("ROSTER")
+        if mod and mod.HandleSlash then
+            mod:HandleSlash(rest)
+        end
     elseif cmd == "ranks" then
         -- Alle Gildenränge mit Namen auflisten
         if not IsInGuild() then
@@ -389,6 +394,8 @@ SlashCmdList["LUNAWOLVES"] = function(input)
         LunaWolves:Print("/lw raid refresh -- Liste aktualisieren")
         LunaWolves:Print("/lw versions -- Versionsübersicht aller Gildler")
         LunaWolves:Print("/lw versions share -- BattleTag-Sharing umschalten")
+        LunaWolves:Print("/lw roster -- Roster-Scan-Status anzeigen")
+        LunaWolves:Print("/lw roster scan -- Roster-Scan sofort erzwingen")
         LunaWolves:Print("/lw ranks -- Gildenränge anzeigen")
         LunaWolves:Print("/lw officer <rang> -- Officer-Rang-Schwelle setzen")
         LunaWolves:Print("/lw debug -- Addon-Messages mitloggen (toggle)")
