@@ -40,6 +40,9 @@ function DKP:OnEnable()
     LunaWolvesDB.DKP.history = LunaWolvesDB.DKP.history or {}
     LunaWolvesDB.DKP.pointsPerKill = LunaWolvesDB.DKP.pointsPerKill or 10
     LunaWolvesDB.DKP.lastSyncTimestamp = LunaWolvesDB.DKP.lastSyncTimestamp or 0
+    -- Unix-Timestamp des neuesten Eintrags der zuletzt erfolgreich mit dem Server synchronisiert wurde.
+    -- Wird vom Desktop-Agenten nach jedem erfolgreichen Upload gesetzt.
+    LunaWolvesDB.DKP.serverLastSyncedTs = LunaWolvesDB.DKP.serverLastSyncedTs or 0
     -- Tombstones für gelöschte Spieler (verhindern Re-Sync von Daten gelöschter Spieler)
     LunaWolvesDB.DKP.deleted = LunaWolvesDB.DKP.deleted or {}
     -- Archiv für Season-Resets (nur lokal, nicht synchronisiert)
