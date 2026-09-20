@@ -460,9 +460,7 @@ local function CreateMinimapButton()
     end
 
     -- Dragging um die Minimap
-    local isDragging = false
     btn:SetScript("OnDragStart", function(self)
-        isDragging = true
         self:SetScript("OnUpdate", function(self)
             local mx, my = Minimap:GetCenter()
             local cx, cy = GetCursorPosition()
@@ -475,7 +473,6 @@ local function CreateMinimapButton()
     end)
 
     btn:SetScript("OnDragStop", function(self)
-        isDragging = false
         self:SetScript("OnUpdate", nil)
     end)
 

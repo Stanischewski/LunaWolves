@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lua:
+    name: Lua-Syntax und TOC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lua installieren
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+
+      # Ein Syntaxfehler lädt das Addon im Spiel gar nicht erst — das hier
+      # fängt ihn vor dem Release ab.
+      - name: Alle Lua-Dateien prüfen
+        run: |
+          fail=0
+          for f in $(find . -name '*.lua' -not -path './.git/*' | sort); do
+            if err=$(lua5.4 -e "local fn,e=loadfile('$f'); if not fn then print(e) end" 2>&1) && [ -z "$err" ]; then
+              echo "  ok  $f"
+            else
+              echo "::error file=$f::$err"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # Jede in der TOC gelistete Datei muss existieren, sonst lädt das Addon
+      # unvollständig — ein Fehler, den man im Spiel erst spät bemerkt.
+      - name: TOC gegen die Dateien prüfen
+        run: |
+          fail=0
+          while IFS= read -r line; do
+            case "$line" in
+              ''|'#'*) continue ;;
+            esac
+            file=$(echo "$line" | tr -d '\r')
+            if [ ! -f "$file" ]; then
+              echo "::error::In LunaWolves.toc gelistet, aber nicht vorhanden: $file"
+              fail=1
+            else
+              echo "  ok  $file"
+            fi
+          done < LunaWolves.toc
+          exit $fail
+
+      - name: Version in TOC und Release-Workflow vergleichen
+        run: |
+          version=$(grep -oP '^## Version:\s*\K.*' LunaWolves.toc | tr -d '\r')
+          if [ -z "$version" ]; then
+            echo "::error::Keine '## Version:' in LunaWolves.toc gefunden"
+            exit 1
+          fi
+          echo "Addon-Version: $version"
