@@ -15,7 +15,6 @@ LunaWolves.playerRealm = nil
 
 local ADDON_PREFIX = "LunaWolves"
 local SEND_QUEUE = {}
-local SEND_TIMER = nil
 local CHUNK_SIZE = 230           -- Platz für Header lassen
 local CHUNK_BUFFERS = {}         -- Empfangspuffer für Chunked-Nachrichten
 
@@ -131,22 +130,34 @@ function LunaWolves:SendMessage(channel, moduleName, command, payload, target)
 end
 
 -- Send-Queue: Rate-Limiting (max 10 Nachrichten/Sek pro Prefix)
+--
+-- WICHTIG: C_Timer.After gibt KEINEN Handle zurueck (nur C_Timer.NewTimer tut
+-- das). Frueher stand hier `SEND_TIMER = C_Timer.After(...)`, womit SEND_TIMER
+-- dauerhaft nil blieb -- die Waechterbedingung unten war immer wahr und jeder
+-- QueueSend-Aufruf startete eine WEITERE parallele Abarbeitungsschleife. Bei
+-- einem Bosskill-Batch liefen so dutzende Schleifen gleichzeitig und schossen
+-- weit ueber die angepeilten 10 Nachrichten/Sekunde hinaus, was Blizzards
+-- Drossel mit verworfenen Nachrichten bis hin zur Trennung beantwortet.
+-- Ein schlichtes Flag drueckt die Absicht korrekt aus.
+local SEND_RUNNING = false
+
 function LunaWolves:QueueSend(msg, channel, target)
     table.insert(SEND_QUEUE, { msg = msg, channel = channel, target = target })
-    if not SEND_TIMER then
+    if not SEND_RUNNING then
+        SEND_RUNNING = true
         self:ProcessSendQueue()
     end
 end
 
 function LunaWolves:ProcessSendQueue()
     if #SEND_QUEUE == 0 then
-        SEND_TIMER = nil
+        SEND_RUNNING = false
         return
     end
     local item = table.remove(SEND_QUEUE, 1)
     self:DebugSend(item.msg, item.channel, item.target)
     C_ChatInfo.SendAddonMessage(ADDON_PREFIX, item.msg, item.channel, item.target)
-    SEND_TIMER = C_Timer.After(0.1, function()
+    C_Timer.After(0.1, function()
         LunaWolves:ProcessSendQueue()
     end)
 end
@@ -699,7 +710,9 @@ coreFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        LunaWolves:Print("v1.2.2 geladen. /lw für Hilfe.")
+        local version = (C_AddOns and C_AddOns.GetAddOnMetadata
+            and C_AddOns.GetAddOnMetadata("LunaWolves", "Version")) or "?"
+        LunaWolves:Print("v" .. version .. " geladen. /lw für Hilfe.")
 
     elseif event == "GUILD_ROSTER_UPDATE" then
         LunaWolves:ScanGuildRoster()

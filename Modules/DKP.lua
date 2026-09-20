@@ -100,9 +100,37 @@ end
 -- Kern-Operationen
 -- ============================================================
 
--- Eindeutige ID für History-Einträge
+-- Eindeutige ID für History-Einträge.
+--
+-- WICHTIG: Hier stand früher math.random(1000, 9999). OnEncounterEnd vergibt
+-- Punkte in einer engen Schleife an den ganzen Raid -- alle Einträge fallen
+-- also in dieselbe Sekunde, beim selben Officer. Die Eindeutigkeit hing damit
+-- allein an 9.000 Zufallswerten: bei 30 Raidmitgliedern rund 4,7 % Kollisions-
+-- wahrscheinlichkeit pro Bosskill. Bei einer Kollision verwarf die Duplikat-
+-- prüfung in Award() den zweiten Eintrag stillschweigend -- der Spieler bekam
+-- keine Punkte, ohne jede Meldung.
+-- Ein monoton steigender Zähler schließt Kollisionen innerhalb einer Sitzung
+-- aus. Das Sitzungs-Salz deckt den Restfall ab, dass ein Officer in derselben
+-- Sekunde neu einloggt und der Zähler wieder bei 1 beginnt.
+local entrySeq = 0
+local sessionSalt = math.random(100, 999)
+
 local function GenerateEntryId(officer)
-    return officer .. "-" .. time() .. "-" .. math.random(1000, 9999)
+    entrySeq = entrySeq + 1
+    return officer .. "-" .. time() .. "-" .. sessionSalt .. "-" .. entrySeq
+end
+
+-- Trennzeichen des Wire-Formats aus Freitextfeldern entfernen.
+--
+-- Das Sync-Format ist "id;player;delta;reason;type;officer;timestamp", Batches
+-- werden mit "|" getrennt. Der Grund ist frei eingegebener Text. Enthielt er
+-- ein ";", verschoben sich beim Empfänger alle Folgefelder: entryType bekam
+-- einen Textschnipsel, officer den echten Typ, und tonumber(ts) fiel auf nil
+-- zurück -- der Eintrag landete mit falschem Zeitstempel in der DB und
+-- verdarb lastSyncTimestamp. Ein "|" zerlegte einen Eintrag sogar in zwei.
+local function SanitizeField(text)
+    if type(text) ~= "string" then return "" end
+    return (text:gsub("[;|]", " "))
 end
 
 -- Tombstone-Helpers: Spieler-Lösch-Marker mit 90-Tage-Verfall
@@ -165,7 +193,7 @@ function DKP:Award(player, amount, reason, entryType, officer, entryId, timestam
         id = entryId,
         player = player,
         delta = amount,
-        reason = reason or "",
+        reason = SanitizeField(reason),
         type = entryType,
         officer = officer,
         timestamp = timestamp,
@@ -245,7 +273,7 @@ function DKP:OnEncounterEnd(encounterID, encounterName, difficultyID, groupSize,
                 local ok, entryId, ts = self:Award(shortName, pointsPerKill, reason, "BOSS")
                 if ok then
                     table.insert(batchEntries, table.concat({
-                        entryId, shortName, tostring(pointsPerKill), reason, "BOSS",
+                        entryId, shortName, tostring(pointsPerKill), SanitizeField(reason), "BOSS",
                         LunaWolves.playerName, tostring(ts)
                     }, ";"))
                 end
@@ -311,7 +339,7 @@ end
 function DKP:BroadcastUpdate(entryId, player, delta, reason, entryType, timestamp)
     -- Format: id;player;delta;reason;type;officer;timestamp
     local payload = table.concat({
-        entryId, player, tostring(delta), reason, entryType,
+        entryId, player, tostring(delta), SanitizeField(reason), entryType,
         LunaWolves.playerName, tostring(timestamp)
     }, ";")
     -- Immer an Gilde (für Offline-Sync und Nicht-Raid-Officers)
@@ -410,7 +438,7 @@ function DKP:HandleSyncRequest(payload, sender, senderFull)
         if entry.timestamp > sinceTs then
             table.insert(entries, table.concat({
                 entry.id, entry.player, tostring(entry.delta),
-                entry.reason, entry.type, entry.officer,
+                SanitizeField(entry.reason), entry.type, entry.officer,
                 tostring(entry.timestamp)
             }, ";"))
         end
@@ -1649,7 +1677,7 @@ function DKP:_PerformReset(seasonName)
     LunaWolves:Print("|cff00ff00Season-Reset durchgeführt.|r Archiv: " .. seasonName)
 
     -- Broadcast an andere Officers, damit sie auch resetten
-    LunaWolves:SendMessage("GUILD", "DKP", "RESET", seasonName .. ";" .. time())
+    LunaWolves:SendMessage("GUILD", "DKP", "RESET", SanitizeField(seasonName) .. ";" .. time())
 
     if self.mainFrame and self.mainFrame:IsShown() then
         self:RefreshList()
