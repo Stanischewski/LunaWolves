@@ -8,6 +8,13 @@ on:
   push:
     tags:
       - 'v*'
+  # Manueller Start, wenn der Tag noch nicht existiert: gh legt ihn beim
+  # Anlegen des Releases selbst auf dem ausgecheckten Commit an.
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release-Tag (z.B. v1.3.0)'
+        required: true
 
 permissions:
   contents: write
@@ -22,7 +29,13 @@ jobs:
       - name: Version aus Tag extrahieren
         id: version
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ inputs.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "dispatched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "dispatched=true" >> "$GITHUB_OUTPUT"
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
@@ -48,21 +61,28 @@ jobs:
         id: notes
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          # Bei annotated Tags den Tag-Body nehmen, sonst den Commit-Body.
-          TAG_TYPE=$(git cat-file -t "$TAG" 2>/dev/null || echo "commit")
-          if [ "$TAG_TYPE" = "tag" ]; then
-            NOTES=$(git tag -l --format='%(contents:body)' "$TAG")
+          NOTES=""
+          # Vorrang hat eine hinterlegte Datei. Beim manuellen Start gibt es
+          # noch keinen Tag, aus dem sich ein Body lesen liesse.
+          FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$FILE" ]; then
+            NOTES=$(cat "$FILE")
+          elif git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            # Bei annotated Tags den Tag-Body nehmen, sonst den Commit-Body.
+            TAG_TYPE=$(git cat-file -t "$TAG" 2>/dev/null || echo "commit")
+            if [ "$TAG_TYPE" = "tag" ]; then
+              NOTES=$(git tag -l --format='%(contents:body)' "$TAG")
+            fi
             # Falls Tag-Body leer (z.B. nur Signatur), Commit-Body nehmen
             if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
               NOTES=$(git log -1 --format=%b "$TAG")
             fi
           else
-            # Lightweight Tag: Commit-Body verwenden
-            NOTES=$(git log -1 --format=%b "$TAG")
+            NOTES=$(git log -1 --format=%b HEAD)
           fi
           # Wenn Body leer, Fallback auf Subject
           if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
-            NOTES=$(git log -1 --format=%s "$TAG")
+            NOTES=$(git log -1 --format=%s HEAD)
           fi
           # In Datei schreiben (handhabt Mehrzeiler ohne Shell-Escaping)
           printf '%s\n' "$NOTES" > release-notes.md
@@ -81,7 +101,13 @@ jobs:
             gh release edit "$TAG" --notes-file release-notes.md
           else
             echo "Release $TAG wird erstellt."
-            gh release create "$TAG" LunaWolves.zip \
+            TARGET=""
+            if [ "${{ steps.version.outputs.dispatched }}" = "true" ]; then
+              # Ohne existierenden Tag legt gh ihn auf diesem Commit an.
+              TARGET="--target $GITHUB_SHA"
+            fi
+            # shellcheck disable=SC2086
+            gh release create "$TAG" LunaWolves.zip $TARGET \
               --title "$TAG" \
               --notes-file release-notes.md
           fi
