@@ -47,9 +47,19 @@ function DKP:OnEnable()
     LunaWolvesDB.DKP.deleted = LunaWolvesDB.DKP.deleted or {}
     -- Archiv für Season-Resets (nur lokal, nicht synchronisiert)
     LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
+    -- Zeitpunkt des letzten Season-Resets. Einträge davor zählen nicht mehr
+    -- und werden weder angenommen noch weitergegeben (siehe HandleEpoch).
+    LunaWolvesDB.DKP.seasonEpoch = LunaWolvesDB.DKP.seasonEpoch or 0
 
     -- Tombstones älter als 90 Tage aufräumen
     self:PruneTombstones()
+
+    -- Nachschlage-Index über die Entry-IDs aufbauen.
+    -- Award() suchte Duplikate vorher linear über die gesamte History: ein
+    -- Vollabgleich mit n Einträgen kostete n²/2 Vergleiche, bei 3.000
+    -- Einträgen also rund 4,5 Millionen Tabellenzugriffe in einem Frame --
+    -- ein spürbarer Freeze mitten im Raid.
+    self:RebuildEntryIndex()
 
     -- Session-Zustand (nicht in SavedVariables -- wird nicht gespeichert)
     self.sessionActive  = false
@@ -133,6 +143,20 @@ local function SanitizeField(text)
     return (text:gsub("[;|]", " "))
 end
 
+-- Nachschlage-Index über die Entry-IDs (O(1) statt linearer Suche).
+-- Nicht persistiert: wird bei jedem Login aus der History aufgebaut.
+function DKP:RebuildEntryIndex()
+    self.entryIndex = {}
+    for _, entry in ipairs(LunaWolvesDB.DKP.history) do
+        if entry.id then self.entryIndex[entry.id] = true end
+    end
+end
+
+-- Saison-Grenze: Einträge bis einschließlich dieses Zeitpunkts zählen nicht mehr.
+function DKP:GetSeasonEpoch()
+    return LunaWolvesDB.DKP.seasonEpoch or 0
+end
+
 -- Tombstone-Helpers: Spieler-Lösch-Marker mit 90-Tage-Verfall
 local TOMBSTONE_TTL = 90 * 24 * 60 * 60  -- 90 Tage in Sekunden
 
@@ -174,6 +198,14 @@ function DKP:Award(player, amount, reason, entryType, officer, entryId, timestam
     timestamp = timestamp or time()
     entryType = entryType or "MANUAL"
 
+    -- Saison-Grenze: Einträge aus einer abgeschlossenen Saison werden nicht
+    -- mehr angenommen. Ohne diese Prüfung spielte ein Officer, der den Reset
+    -- offline verpasst hatte, beim nächsten Sync die komplette alte Saison
+    -- zurück in die Gilde.
+    if timestamp <= self:GetSeasonEpoch() then
+        return false
+    end
+
     -- Tombstone-Check: Wenn der Spieler nach diesem Eintrag gelöscht wurde,
     -- darf der Eintrag NICHT mehr eingespielt werden (verhindert Re-Sync von
     -- gelöschten Spielern).
@@ -181,11 +213,9 @@ function DKP:Award(player, amount, reason, entryType, officer, entryId, timestam
         return false
     end
 
-    -- Duplikat prüfen
-    for _, entry in ipairs(LunaWolvesDB.DKP.history) do
-        if entry.id == entryId then
-            return false  -- Bereits vorhanden
-        end
+    -- Duplikat prüfen (O(1) über den Index statt linear über die History)
+    if self.entryIndex and self.entryIndex[entryId] then
+        return false  -- Bereits vorhanden
     end
 
     -- History-Eintrag erstellen
@@ -199,6 +229,8 @@ function DKP:Award(player, amount, reason, entryType, officer, entryId, timestam
         timestamp = timestamp,
     }
     table.insert(LunaWolvesDB.DKP.history, entry)
+    self.entryIndex = self.entryIndex or {}
+    self.entryIndex[entryId] = true
 
     -- Punkte-Tabelle aktualisieren
     if not LunaWolvesDB.DKP.points[player] then
@@ -356,7 +388,9 @@ end
 -- Sync anfordern (beim Login)
 function DKP:RequestSync()
     local lastTs = LunaWolvesDB.DKP.lastSyncTimestamp or 0
-    LunaWolves:SendMessage("GUILD", "DKP", "SYNCREQ", tostring(lastTs))
+    -- Format: sinceTs;epoch  (alte Clients senden nur sinceTs -- wird toleriert)
+    LunaWolves:SendMessage("GUILD", "DKP", "SYNCREQ",
+        tostring(lastTs) .. ";" .. tostring(self:GetSeasonEpoch()))
 end
 
 -- Eingehende Nachrichten verarbeiten.
@@ -371,6 +405,10 @@ function DKP:OnMessage(command, payload, sender, channel, senderFull)
         self:HandleSyncRequest(payload, sender, senderFull)
     elseif command == "SYNCRESP" then
         self:HandleSyncResponse(payload, sender)
+    elseif command == "EPOCH" then
+        self:HandleEpoch(payload, sender)
+    elseif command == "SYNCCLAIM" then
+        self:HandleSyncClaim(payload, sender)
     elseif command == "TOMBSTONES" then
         self:HandleTombstones(payload, sender)
     elseif command == "DELETE" then
@@ -423,6 +461,33 @@ function DKP:HandleBatch(payload, sender)
     end
 end
 
+-- Wie viele Einträge höchstens in EINER Antwort stecken.
+-- Vorher ging die komplette History in einer Nachricht raus: bei 3.000
+-- Einträgen à ~70 Zeichen rund 210 KB, die das Chunking in ~900
+-- Addon-Nachrichten zerlegte -- und das von JEDEM Officer. Bei fünf Officers
+-- also ~4.500 Nachrichten für einen einzigen neuen Spieler.
+local SYNC_PAGE_SIZE = 150
+
+-- Rangfolge unter den Officers: alphabetisch, damit alle dieselbe Reihenfolge
+-- berechnen. Dieselbe deterministische Wahl nutzt schon ShouldAutoAward.
+function DKP:OfficerRank()
+    local me = LunaWolves.playerName
+    local rank = 0
+    for name in pairs(LunaWolves.guildRanks) do
+        if LunaWolves:IsOfficer(name) and name < me then
+            rank = rank + 1
+        end
+    end
+    return rank
+end
+
+-- Ein anderer Officer hat die Anfrage übernommen -- eigene Antwort verwerfen.
+function DKP:HandleSyncClaim(payload, sender)
+    if not LunaWolves:IsOfficer(sender) then return end
+    self._claimedRequests = self._claimedRequests or {}
+    self._claimedRequests[payload] = true
+end
+
 function DKP:HandleSyncRequest(payload, sender, senderFull)
     -- Nur Officers antworten
     if not LunaWolves:IsOfficer() then return end
@@ -431,25 +496,75 @@ function DKP:HandleSyncRequest(payload, sender, senderFull)
     -- Fallback auf Kurzname für Same-Realm
     local target = senderFull or sender
 
-    local sinceTs = tonumber(payload) or 0
-    local entries = {}
+    -- Format: sinceTs;epoch (Epoche fehlt bei älteren Clients)
+    local sinceStr, epochStr = strsplit(";", payload or "")
+    local sinceTs = tonumber(sinceStr) or 0
+    local theirEpoch = tonumber(epochStr) or 0
 
-    for _, entry in ipairs(LunaWolvesDB.DKP.history) do
-        if entry.timestamp > sinceTs then
-            table.insert(entries, table.concat({
-                entry.id, entry.player, tostring(entry.delta),
-                SanitizeField(entry.reason), entry.type, entry.officer,
-                tostring(entry.timestamp)
-            }, ";"))
-        end
+    -- Kennt der Anfragende eine ältere Saison, bekommt er zuerst die aktuelle
+    -- Epoche -- sonst würde er gleich wieder alte Einträge verteilen.
+    local myEpoch = self:GetSeasonEpoch()
+    if myEpoch > theirEpoch then
+        LunaWolves:SendMessage("WHISPER", "DKP", "EPOCH", tostring(myEpoch), target)
     end
 
-    if #entries > 0 then
-        local respPayload = table.concat(entries, "|")
+    -- Nur EIN Officer antwortet. Gestaffelt nach alphabetischem Rang; wer
+    -- zuerst dran ist, meldet das per SYNCCLAIM, die übrigen stehen ab.
+    self._claimedRequests = self._claimedRequests or {}
+    self._claimedRequests[target] = nil
+    local delay = self:OfficerRank() * 1.5
+
+    local function respond()
+        if self._claimedRequests[target] then
+            self._claimedRequests[target] = nil
+            return
+        end
+        self._claimedRequests[target] = nil
+        LunaWolves:SendMessage("GUILD", "DKP", "SYNCCLAIM", target)
+        self:SendSyncPage(target, math.max(sinceTs, myEpoch))
+    end
+
+    if delay > 0 then
+        C_Timer.After(delay, respond)
+    else
+        respond()
+    end
+end
+
+-- Schickt höchstens SYNC_PAGE_SIZE Einträge. Gibt es mehr, fordert der
+-- Empfänger die nächste Seite selbst an (siehe HandleSyncResponse).
+function DKP:SendSyncPage(target, sinceTs)
+    local candidates = {}
+    for _, entry in ipairs(LunaWolvesDB.DKP.history) do
+        if entry.timestamp > sinceTs then
+            table.insert(candidates, entry)
+        end
+    end
+    -- Aufsteigend sortieren, damit die Seitenbildung lückenlos ist: der
+    -- Empfänger setzt lastSyncTimestamp auf den jüngsten Eintrag der Seite.
+    table.sort(candidates, function(a, b)
+        if a.timestamp == b.timestamp then return tostring(a.id) < tostring(b.id) end
+        return a.timestamp < b.timestamp
+    end)
+
+    local page = {}
+    for i = 1, math.min(#candidates, SYNC_PAGE_SIZE) do
+        local entry = candidates[i]
+        table.insert(page, table.concat({
+            entry.id, entry.player, tostring(entry.delta),
+            SanitizeField(entry.reason), entry.type, entry.officer,
+            tostring(entry.timestamp)
+        }, ";"))
+    end
+
+    if #page > 0 then
+        local hasMore = #candidates > SYNC_PAGE_SIZE and "1" or "0"
+        -- Kopfzeile "MORE=x" vor den Einträgen
+        local respPayload = "MORE=" .. hasMore .. "|" .. table.concat(page, "|")
         LunaWolves:SendMessage("WHISPER", "DKP", "SYNCRESP", respPayload, target)
     end
 
-    -- Tombstones immer mitschicken (verhindert Wiederbeleben gelöschter Spieler)
+    -- Tombstones nur mit der ersten Seite mitschicken
     if #LunaWolvesDB.DKP.deleted > 0 then
         local tombs = {}
         for _, t in ipairs(LunaWolvesDB.DKP.deleted) do
@@ -464,6 +579,13 @@ function DKP:HandleSyncResponse(payload, sender)
 
     local entries = { strsplit("|", payload) }
     local added = 0
+
+    -- Kopfzeile "MORE=0|1" abtrennen (ältere Officers senden sie nicht)
+    local hasMore = false
+    if entries[1] and entries[1]:sub(1, 5) == "MORE=" then
+        hasMore = entries[1]:sub(6) == "1"
+        table.remove(entries, 1)
+    end
 
     for _, entryStr in ipairs(entries) do
         local id, player, delta, reason, entryType, officer, ts = strsplit(";", entryStr)
@@ -481,6 +603,70 @@ function DKP:HandleSyncResponse(payload, sender)
 
     if added > 0 then
         LunaWolves:Print(added .. " DKP-Einträge synchronisiert.")
+    end
+
+    -- Gibt es weitere Seiten, die nächste anfordern. lastSyncTimestamp wurde
+    -- oben auf den jüngsten Eintrag dieser Seite gesetzt, die Folgeanfrage
+    -- beginnt also genau dahinter.
+    if hasMore then
+        C_Timer.After(2, function() DKP:RequestSync() end)
+    end
+end
+
+-- Eine neuere Saison als die eigene: alles davor wird verworfen.
+-- Damit erfährt auch ein Officer, der den Reset offline verpasst hat, davon --
+-- vorher spielte genau der beim nächsten Sync die komplette alte Saison zurück
+-- in die Gilde.
+function DKP:HandleEpoch(payload, sender)
+    if not LunaWolves:IsOfficer(sender) then return end
+    local epoch = tonumber(payload)
+    if not epoch or epoch <= self:GetSeasonEpoch() then return end
+
+    self:ApplySeasonEpoch(epoch, "Saison von " .. sender, sender)
+    LunaWolves:Print("|cff00ff00Season-Reset übernommen|r (von " .. sender .. ").")
+end
+
+-- Setzt die Saison-Grenze und entfernt alles, was davor liegt.
+-- Der bisherige Stand wird lokal archiviert.
+function DKP:ApplySeasonEpoch(epoch, seasonName, archivedBy)
+    LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
+    LunaWolvesDB.DKP.archive[seasonName] = {
+        points     = LunaWolvesDB.DKP.points,
+        history    = LunaWolvesDB.DKP.history,
+        archivedAt = epoch,
+        archivedBy = archivedBy,
+    }
+
+    -- Einträge NACH der Epoche behalten -- sie gehören schon zur neuen Saison.
+    local kept = {}
+    for _, entry in ipairs(LunaWolvesDB.DKP.history) do
+        if (entry.timestamp or 0) > epoch then
+            table.insert(kept, entry)
+        end
+    end
+
+    LunaWolvesDB.DKP.history = kept
+    LunaWolvesDB.DKP.points = {}
+    LunaWolvesDB.DKP.seasonEpoch = epoch
+    LunaWolvesDB.DKP.lastSyncTimestamp = epoch
+
+    -- Punkte aus den verbliebenen Einträgen neu aufbauen
+    for _, entry in ipairs(kept) do
+        local pts = LunaWolvesDB.DKP.points[entry.player]
+        if not pts then
+            pts = { current = 0, lifetime = 0 }
+            LunaWolvesDB.DKP.points[entry.player] = pts
+        end
+        pts.current = pts.current + (entry.delta or 0)
+        if (entry.delta or 0) > 0 then
+            pts.lifetime = pts.lifetime + entry.delta
+        end
+    end
+
+    self:RebuildEntryIndex()
+
+    if self.mainFrame and self.mainFrame:IsShown() then
+        self:RefreshList()
     end
 end
 
@@ -1640,6 +1826,8 @@ function DKP:_PerformDelete(name)
         officer   = officer,
     })
 
+    self:RebuildEntryIndex()
+
     LunaWolves:Print("|cff00ff00" .. name .. " gelöscht.|r (" .. removed .. " History-Einträge entfernt)")
     -- Broadcast an andere Officers (neues Format: name;timestamp;officer)
     LunaWolves:SendMessage("GUILD", "DKP", "DELETE", name .. ";" .. now .. ";" .. officer)
@@ -1660,28 +1848,17 @@ function DKP:_PerformReset(seasonName)
     if not LunaWolves:IsOfficer() then return end
     seasonName = seasonName or ("Saison-" .. date("%Y-%m-%d-%H%M"))
 
-    -- Aktuellen Stand lokal archivieren
-    LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
-    LunaWolvesDB.DKP.archive[seasonName] = {
-        points     = LunaWolvesDB.DKP.points,
-        history    = LunaWolvesDB.DKP.history,
-        archivedAt = time(),
-        archivedBy = LunaWolves.playerName,
-    }
-
-    -- Reset: alles auf null. Tombstones bleiben (90-Tage-Schutz weiterläuft).
-    LunaWolvesDB.DKP.points = {}
-    LunaWolvesDB.DKP.history = {}
-    LunaWolvesDB.DKP.lastSyncTimestamp = 0
+    -- Epoche setzen, archivieren und alles davor verwerfen.
+    -- lastSyncTimestamp wird dabei auf die Epoche gesetzt, nicht auf 0 --
+    -- sonst hätte der nächste Sync einen Vollabgleich über die gesamte
+    -- History angefordert, die dieser Reset gerade beendet hat.
+    local epoch = time()
+    self:ApplySeasonEpoch(epoch, seasonName, LunaWolves.playerName)
 
     LunaWolves:Print("|cff00ff00Season-Reset durchgeführt.|r Archiv: " .. seasonName)
 
     -- Broadcast an andere Officers, damit sie auch resetten
-    LunaWolves:SendMessage("GUILD", "DKP", "RESET", SanitizeField(seasonName) .. ";" .. time())
-
-    if self.mainFrame and self.mainFrame:IsShown() then
-        self:RefreshList()
-    end
+    LunaWolves:SendMessage("GUILD", "DKP", "RESET", SanitizeField(seasonName) .. ";" .. epoch)
 end
 
 -- Empfängerseite: Reset-Broadcast eines anderen Officers anwenden
@@ -1690,24 +1867,12 @@ function DKP:HandleReset(payload, sender)
     local seasonName, ts = strsplit(";", payload)
     seasonName = (seasonName and seasonName ~= "") and seasonName or ("Saison-" .. date("%Y-%m-%d-%H%M"))
 
-    -- Lokal archivieren (eigene Sicht der Pre-Reset-Daten)
-    LunaWolvesDB.DKP.archive = LunaWolvesDB.DKP.archive or {}
-    LunaWolvesDB.DKP.archive[seasonName] = {
-        points     = LunaWolvesDB.DKP.points,
-        history    = LunaWolvesDB.DKP.history,
-        archivedAt = tonumber(ts) or time(),
-        archivedBy = sender,
-    }
+    local epoch = tonumber(ts) or time()
+    -- Idempotent: ein zweimal empfangener RESET ändert nichts mehr.
+    if epoch <= self:GetSeasonEpoch() then return end
 
-    LunaWolvesDB.DKP.points = {}
-    LunaWolvesDB.DKP.history = {}
-    LunaWolvesDB.DKP.lastSyncTimestamp = 0
-
+    self:ApplySeasonEpoch(epoch, seasonName, sender)
     LunaWolves:Print("|cff00ff00Season-Reset von " .. sender .. ":|r " .. seasonName)
-
-    if self.mainFrame and self.mainFrame:IsShown() then
-        self:RefreshList()
-    end
 end
 
 -- Bestätigungs-Popup für Lösch-Aktion aus dem Kontextmenü.
