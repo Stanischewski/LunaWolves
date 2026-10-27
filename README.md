@@ -9,18 +9,36 @@ WoW-Addon fuer die Gilde **The Last Luna Wolves**.
 - **Minimap-Icon** – Schnellzugriff auf alle Funktionen
 - **Multi-Officer-Sync** – DKP-Daten werden automatisch zwischen Officers synchronisiert
 
+## Download
+
+**[⬇ LunaWolves.zip herunterladen](https://github.com/Stanischewski/LunaWolves/releases/latest/download/LunaWolves.zip)**
+
+Der Link zeigt immer auf die neueste Fassung — er bleibt also gueltig, auch
+nach dem naechsten Release.
+
+Alle Fassungen mit Aenderungsliste:
+[Releases](https://github.com/Stanischewski/LunaWolves/releases)
+
 ## Installation
 
-### Mit WowUp (empfohlen)
+### Manuell
+1. [LunaWolves.zip](https://github.com/Stanischewski/LunaWolves/releases/latest/download/LunaWolves.zip) herunterladen
+2. ZIP entpacken — darin liegt ein Ordner `LunaWolves`
+3. Diesen Ordner nach `World of Warcraft/_retail_/Interface/AddOns/` kopieren
+4. WoW neu starten
+
+Danach muss unter `Interface/AddOns/LunaWolves/` die Datei `LunaWolves.toc`
+liegen. Liegt dort noch ein Unterordner, wurde eine Ebene zu viel kopiert.
+
+### Mit dem Companion-Agent
+Der [Desktop-Agent](https://github.com/Stanischewski/LunaWolvesCompanion)
+installiert das Addon und haelt es aktuell — er meldet sich von selbst,
+sobald hier ein neues Release erscheint.
+
+### Mit WowUp
 1. [WowUp](https://wowup.io/) installieren
 2. In WowUp: **Get Addons** > GitHub-URL eingeben: `https://github.com/Stanischewski/LunaWolves`
-3. Installieren – fertig! Updates kommen automatisch.
-
-### Manuell
-1. Neuestes Release herunterladen: [Releases](https://github.com/Stanischewski/LunaWolves/releases)
-2. ZIP entpacken
-3. Den Ordner `LunaWolves` nach `World of Warcraft/_retail_/Interface/AddOns/` kopieren
-4. WoW neu starten
+3. Installieren – Updates kommen dann automatisch.
 
 ## Befehle
 
